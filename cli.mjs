@@ -44,6 +44,7 @@ function parseAddArgs(args) {
     else if (a === "--service") opts.service = args[++i];
     else if (a === "--path") opts.path = args[++i];
     else if (a === "--item") opts.item = args[++i];
+    else if (a === "--user") opts.user = args[++i];
     else if (!a.startsWith("-")) opts.token ??= a;
     else { console.error(`未知参数：${a}`); process.exit(2); }
   }
@@ -71,7 +72,7 @@ function updateConfig(name, def) {
 async function cmdAdd(args) {
   const opts = parseAddArgs(args);
   if (!opts.name) {
-    console.error("用法：secret-env add -n <name> [TOKEN] [--alias A]... [--desc D] [--provider system|viking|bitwarden ...]\n  name 为人读名（如 github token），env 变量名自动归一化为全大写下划线；位置参数只能是 token 本身\n  system 与 keychain 等价（本机系统密钥库）；已存在条目不带 --provider 时进入维护模式（只改别名/描述），显式给 --provider system 则强制重新收值");
+    console.error("用法：secret-env add -n <name> [TOKEN] [--alias A]... [--desc D] [--provider system|viking|bitwarden ...]\n  name 为人读名（如 github token），env 变量名自动归一化为全大写下划线；位置参数只能是 token 本身\n  system 与 keychain 等价（本机系统密钥库）；--user <acct> 可选，写 keychain account 属性（缺省 = 当前系统用户）\n  已存在条目不带 --provider 时进入维护模式（只改别名/描述），显式给 --provider system 则强制重新收值");
     process.exit(2);
   }
   const envName = envNameFromHuman(opts.name);
@@ -99,12 +100,14 @@ async function cmdAdd(args) {
     const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
     try {
       const backend = systemBackend(); // 平台判断 + 二进制探测，先于人话报错
-      await backend.write(service, value);
+      await backend.write(service, value, opts.user);
     } catch (e) {
       console.error(`入库失败：${e.message}`);
       process.exit(2);
     }
     uri = `keychain://${service}`;
+  } else if (opts.user && opts.provider !== "system") {
+    console.error("--user 仅支持 system provider（keychain account 属性）"); process.exit(2);
   } else if (opts.provider === "viking") {
     if (!opts.path) { console.error("viking 需要 --path <category>/<target>[/<field>]"); process.exit(2); }
     // 值由用户经 ov 自行放入 privacy 区域，这里只登记映射

@@ -65,13 +65,29 @@ export function systemBackend() {
     requireBin("security", "macOS 自带，通常不会缺。");
     return {
       backend: "macos-keychain",
-      read: async (service) => {
-        const r = runBin("security", ["find-generic-password", "-s", service, "-w"]);
+      // 同 service 可挂多个 account（不同 -a 是不同条目），find-generic-password 只静默返回第一条——
+      // 读前先经 dump-keychain 计数防歧义（~20ms 开销，可忽略）；宁失败不魔法。
+      read: async (service, field) => {
+        const dup = runBin("security", ["dump-keychain"]);
+        if (dup.ok) {
+          const n = dup.stdout.split(`"svce"<blob>="${service}"`).length - 1;
+          if (n > 1) throw new Error(`keychain 存在 ${n} 条同 service 的 ${service} 条目（不同 account），寻址歧义——请手动消歧`);
+        }
+        if (!field) {
+          const r = runBin("security", ["find-generic-password", "-s", service, "-w"]);
+          if (!r.ok) throw new Error(`security find-generic-password 未取到 ${service}（exit=${r.exitCode} err=${r.stderr}）`);
+          return r.stdout.trim();
+        }
+        // 次级字段寻址：account 属性（不带 -w 读属性表，值是明文 blob）
+        if (field !== "account") throw new Error(`keychain provider 次级字段只支持 account，收到：${field}`);
+        const r = runBin("security", ["find-generic-password", "-s", service]);
         if (!r.ok) throw new Error(`security find-generic-password 未取到 ${service}（exit=${r.exitCode} err=${r.stderr}）`);
-        return r.stdout.trim();
+        const vals = [...new Set([...r.stdout.matchAll(/"acct"<blob>="([^"]*)"/g)].map((m) => m[1]))];
+        if (vals.length === 0) throw new Error(`keychain 条目 ${service} 无 account 属性`);
+        return vals[0];
       },
-      write: async (service, value) => {
-        const r = runBin("security", ["add-generic-password", "-a", process.env.USER, "-s", service, "-w", value, "-U"]);
+      write: async (service, value, account) => {
+        const r = runBin("security", ["add-generic-password", "-a", account ?? process.env.USER ?? "", "-s", service, "-w", value, "-U"]);
         if (!r.ok) throw new Error(`security add-generic-password 失败（exit=${r.exitCode} err=${r.stderr}）`);
       },
       remove: async (service) => {
@@ -84,15 +100,18 @@ export function systemBackend() {
     requireBin("secret-tool", "安装 libsecret-tools（Debian/Ubuntu）或 libsecret（Arch），并确保 gnome-keyring 在运行；无头服务器建议改用 bitwarden provider。");
     return {
       backend: "linux-secret-service",
-      read: async (service) => {
+      read: async (service, field) => {
+        if (field) throw new Error(`linux secret-tool 暂不支持次级字段寻址（${field}）——多值请多存条目`);
         const r = runBin("secret-tool", ["lookup", "service", service]);
         const out = r.ok ? r.stdout.trim() : "";
         if (!out) throw new Error(`secret-tool lookup 未取到 ${service}（exit=${r.exitCode}）——确认 keyring daemon 已解锁`);
         return out;
       },
-      write: async (service, value) => {
-        // 值经 stdin 传递，不落 argv
-        const r = spawnSync("secret-tool", ["store", "--label", service, "service", service], { input: value, encoding: "utf8" });
+      write: async (service, value, account) => {
+        // 值经 stdin 传递，不落 argv；account 存为附加属性（与 macOS 语义对齐）
+        const args = ["store", "--label", service, "service", service];
+        if (account) args.push("account", account);
+        const r = spawnSync("secret-tool", args, { input: value, encoding: "utf8" });
         if (r.status !== 0) throw new Error(`secret-tool store 失败（exit=${r.status}）`);
       },
       remove: async (service) => {
@@ -107,12 +126,25 @@ export function systemBackend() {
   throw new Error(`未知平台：${platform}，无 system provider。`);
 }
 
+// bitwarden item JSON → 自定义字段值（保留键分流在 resolveValue，不进这里）
+export function pickBwField(item, field) {
+  const f = (item?.fields ?? []).find((x) => x.name === field);
+  if (f === undefined) {
+    const names = (item?.fields ?? []).map((x) => x.name).join("、");
+    throw new Error(`bitwarden 条目 ${item?.id ?? "?"} 无字段「${field}」${names ? `（现有：${names}）` : "（无自定义字段）"}`);
+  }
+  return f.value ?? "";
+}
+
 export async function resolveValue(uri, config = null) {
   const scheme = uri.split("://")[0];
   const rest = uri.slice(scheme.length + 3);
   if (scheme === "keychain") {
+    // 一般化寻址：keychain://<service>[/<field>]。一级 = 主密钥（password），二级当前只支持 account。
+    const parts = rest.split("/");
+    if (parts.length > 2) throw new Error(`keychain:// URI 需为 <service>[/<account>]：${uri}`);
     const backend = systemBackend(); // 探测失败 → 人话错误，而非命令跑失败
-    const out = await backend.read(rest);
+    const out = await backend.read(parts[0], parts[1]);
     if (!out) throw new Error(`系统密钥库未取到 ${rest}`);
     return out;
   }
@@ -132,7 +164,8 @@ export async function resolveValue(uri, config = null) {
     return value;
   }
   if (scheme === "bitwarden") {
-    // bitwarden://<item> → bw get password
+    // 一般化寻址：bitwarden://<item>[/<field>]。一级 = password（主密钥）；
+    // 二级保留键 password/username/totp 走 bw get 现成子命令，其余按自定义字段在 fields[] 里按 name 匹配。
     // bw 需要解锁态：若配置里存在 BW_SESSION 记录（如 keychain://bw-session），先解析并注入子进程环境；
     // 无此记录则依赖宿主环境已带 BW_SESSION。session key 本身不允许 bitwarden://（自举死循环）。
     let opts = {};
@@ -142,10 +175,20 @@ export async function resolveValue(uri, config = null) {
         throw new Error("BW_SESSION 记录的 uri 不能是 bitwarden://（需要 vault 先解锁才能解锁，死循环）");
       opts = { env: { ...process.env, BW_SESSION: await resolveValue(sess.uri, config) } };
     }
-    const r = runBin("bw", ["get", "password", rest], opts);
-    const out = r.ok ? r.stdout.trim() : "";
-    if (!out) throw new Error(`bw 未取到 ${rest}（exit=${r.exitCode} err=${r.stderr}）`);
-    return out;
+    const parts = rest.split("/");
+    if (parts.length > 2) throw new Error(`bitwarden:// URI 需为 <item>[/<field>]：${uri}`);
+    const [item, field] = parts;
+    const sub = field ?? "password";
+    if (["password", "username", "totp"].includes(sub)) {
+      // 保留键优先：字段名撞保留键时按保留键语义取（撞名场景改字段名消歧）
+      const r = runBin("bw", ["get", sub, item], opts);
+      const out = r.ok ? r.stdout.trim() : "";
+      if (!out) throw new Error(`bw 未取到 ${item}/${sub}（exit=${r.exitCode} err=${r.stderr}）`);
+      return out;
+    }
+    const r = runBin("bw", ["get", "item", item, "--raw"], opts);
+    if (!r.ok) throw new Error(`bw 未取到条目 ${item}（exit=${r.exitCode} err=${r.stderr}）`);
+    return pickBwField(JSON.parse(r.stdout), sub);
   }
   throw new Error(`未知 provider scheme：${scheme}://`);
 }
