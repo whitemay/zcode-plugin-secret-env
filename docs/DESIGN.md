@@ -42,6 +42,15 @@ AI 会话中执行需要凭据的 Bash 命令时，凭据不能经过模型上�
 
 > scheme 命名拍板（2026-11-04）：OpenViking provider 直接用真实 scheme 标识 `viking://`，不自造 `ov://`。注意 privacy 条目按 category/target/field 三段寻址，并非 viking:// 资源树 URI，只是复用同一 scheme 字面。
 
+### bitwarden:// 的两级解析（2026-11-04，0.1.1）
+
+`bw get password` 需要 vault 解锁态（`BW_SESSION` 环境变量），而钩子进程环境里没有。解法是把 session key 本身登记为一条 secret-env 记录（`BW_SESSION → keychain://bw-session`，存本机钥匙串），`resolveValue(uri, config)` 解析任何 `bitwarden://` 条目前先查配置中的 `BW_SESSION` 记录、经其自身 provider 解析后注入 `bw` 子进程环境——真值不落 rc 文件、不进宿主环境。要点：
+
+- **按名约定**：触发条件是配置里存在名为 `BW_SESSION` 的条目（名字硬编码）；第一级 provider 不限 keychain。
+- **死循环守卫**：BW_SESSION 记录的 uri 不允许是 `bitwarden://`（需要 vault 先解锁才能解锁），显式拒绝。
+- **session key 生命周期**：每次 `bw unlock` 换新值，重跑 `security add-generic-password -U -s bw-session -a "$USER" -w` 覆盖；过期后 bitwarden 凭据解析报 bw 原始错误。
+- 条目名即 `bw get password` 的检索名（execFileSync argv 直传，空格/中文无需转义）；只取 login 条目的 password 字段，重名条目建议用 id。端到端（钩子链路 + Node/Bun 双运行时）已实测通过。
+
 ## 4. 命名与映射层
 
 - **主键 = 周知环境变量名**（`GH_TOKEN`、`OPENAI_API_KEY`、`DATABASE_URL`…）——这些名字本身是事实标准，模型写命令零翻译、多工具共享同一凭据（gh/GitHub API/act 共用 `GH_TOKEN`）
