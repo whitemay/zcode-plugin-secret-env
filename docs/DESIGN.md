@@ -54,6 +54,18 @@ AI 会话中执行需要凭据的 Bash 命令时，凭据不能经过模型上�
 - 探针验证：bw 自定义字段（text/hidden、中文与带空格字段名）均可在 `fields[].value` 取到；`bw get item` 的 JSON 解析天然保留前导空格等值形态
 
 
+### provider 写侧自治（2026-11-04 拍板的原则，先落文档后实现）
+
+**原则：配置即能力。** 只要某 provider 的凭据链在配置里闭环（如 BW_SESSION 存钥匙串、ov 有 cli.conf），secret-env 自己的全部操作——读和写——都应踩着 provider 抽象自治完成，不把 raw 命令（`bw create`/`ov privacy upsert`）留给用户手工跑。`secret-env add` 对所有 provider 统一为「隐藏收值 → provider 写入 → 登记 uri」，值不经 Agent 上下文，secrets.json 是唯一事实源。
+
+推论与边界：
+
+- **读已自治**：resolveValue 统一注入 provider 凭据（BW_SESSION 配置记录优先于宿主环境变量）。
+- **写的落位与读镜像**：写 password 位 ↔ 读一级寻址；写自定义字段/username ↔ 读二级寻址。
+- **bitwarden 写语义**：`--item X`（不存在）→ 新建 login 条目，值进 password 位，`--user` 顺路写 username 位；`--item X --field F` → 已存在条目上 upsert 自定义字段（不存在则拒绝，不隐式建条目）。
+- **viking 写的安全约束**：`ov privacy upsert` 值走 argv 有进程表暴露面，先探针 stdin 通道；不支持则 viking 写侧保持「值由用户在 ov 侧放好」，缺位如实入档，不接受 argv 风险换自治。
+- **keychain 写已闭环**（backend.write），作为统一形态的参照实现。
+
 ### bitwarden:// 的两级解析（2026-11-04，0.1.1）
 
 `bw get password` 需要 vault 解锁态（`BW_SESSION` 环境变量），而钩子进程环境里没有。解法是把 session key 本身登记为一条 secret-env 记录（`BW_SESSION → keychain://bw-session`，存本机钥匙串），`resolveValue(uri, config)` 解析任何 `bitwarden://` 条目前先查配置中的 `BW_SESSION` 记录、经其自身 provider 解析后注入 `bw` 子进程环境——真值不落 rc 文件、不进宿主环境。要点：
