@@ -61,7 +61,10 @@ AI 会话中执行需要凭据的 Bash 命令时，凭据不能经过模型上�
 ## 6. 出口防线（2026-11-04 修订）
 
 1. ~~PostToolUse 脱敏~~：**不可实现**——harness PostToolUse 输出 schema 无 tool_result 改写能力（见 §2.2）。诚实降级：值经输出回流入上下文（如 `echo $GH_TOKEN`）无自动防线，靠 skill 明令禁止
-2. **dump 黑名单**（PreToolUse 前置，已实现）：本会话注入过密钥的命令命中 `env`/`printenv`/`set`/`export` → 直接拒绝并提示（会话状态按 session_id 记在 $TMPDIR/secret-env-state/，只记名字不记值）
+2. **倾泻黑名单**（PreToolUse 前置，已实现；2026-11-04 两轮收窄定稿）：
+   - **初版**：会话注入过密钥后，命令文本命中 env/printenv/set/export 词 → 拒。按「词出现」匹配，实战连坐三次误伤（`set -e`、英文散文里的 `env;`、commit message 里的 dump 词）
+   - **终版（用户拍板）**：仅「命令含密钥引用 **且** 命令位置有倾泻意图」才拦（同命令倾泻如 `GH_TOKEN=${ZCODE_SECRET_0} env`）。会话状态机整体删除——每次 Bash 调用都是全新 shell，注入变量不跨调用存活，跨调用裸 env 无威胁。命令位置=首词/VAR=value 赋值前缀后/`;&&|||`分隔后；env/printenv 任意参数算，set/export 仅裸词或 -p。无引用分支补缺口：围绕注入变量名（zcode 词根）的探测过滤直接拒
+   - 配套 skill 指导：倾泻意图（查环境等）放独立 Bash 调用——独立调用是全新 shell，天然看不到注入值
 
 ## 7. 组件构成
 
