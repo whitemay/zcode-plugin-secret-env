@@ -34,7 +34,7 @@ description: 密钥注入约定——执行需要凭据的 Bash 命令时如何�
 
 ## 已配置条目
 
-配置在 `~/.config/secret-env/secrets.json`（周知名 → {uri, aliases?}）。配置为空时钩子纯旁路、什么都不注入。
+每次 session 启动时，SessionStart 钩子会把已配置的**名字清单**（含别名，无真值）自动注入上下文——以那份清单为准。配置本体在 `~/.config/secret-env/secrets.json`（周知名 → {uri, aliases?}，文件里也只有名字和 uri，没有真值）。配置为空时钩子纯旁路、什么都不注入。
 
 ## 常见配方
 

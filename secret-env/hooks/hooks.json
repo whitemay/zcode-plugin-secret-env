@@ -1,5 +1,18 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "process",
+            "command": "bun",
+            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/secret-env-list.mjs"],
+            "timeoutMs": 5000,
+            "statusMessage": "secret-env 清单注入"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
