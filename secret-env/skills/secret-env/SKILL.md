@@ -7,6 +7,7 @@ description: 密钥注入约定——执行需要凭据的 Bash 命令时如何�
 
 本项目的密钥从私有库（Keychain / OpenViking / Bitwarden）直接注入 Bash 子进程环境。
 **你（模型）从头到尾只写变量名，永远不写、也永远看不到真值。**
+注入使用周知原名（如 `GH_TOKEN`），命令文本零改写——钩子只在命令前加 source 前缀。
 
 ## 两条注入触发（钩子只认显式文本）
 
@@ -21,11 +22,14 @@ description: 密钥注入约定——执行需要凭据的 Bash 命令时如何�
   curl -H "Authorization: Bearer $GH_TOKEN" ...
   psql "$DATABASE_URL" -c '...'
   ```
-- **工具隐式读环境变量时，必须显式化**：裸 `gh pr list` 自己读 `GH_TOKEN`，钩子扫不到。必须写成：
+- **隐式使用必须显式化**：钩子只扫命令文本，隐式读环境变量的工具（`gh`、`git push` 等）扫不到、不会注入。必须让命令文本出现引用，例如变量名前缀或同义别名均可——副作用都是把真值以原名送进环境：
   ```bash
-  GH_TOKEN=$GH_TOKEN gh pr list
+  GH_TOKEN=$GH_TOKEN gh pr list          # 同名显式化
+  GITHUB_TOKEN=${GH_TOKEN} git push ...  # 工具认别的名字，别名映射
+  USE_TOKEN=${GH_TOKEN} some-tool ...    # 任意名字皆可，注入的仍是原名 GH_TOKEN
   ```
-- **倾泻意图放独立调用**：查看环境变量、`set -e` 选项、`export FOO=1` 这类与密钥无关的操作，放在**单独一次 Bash 调用**里，不要和带密钥引用的命令拼在同一条。原因：① 每次调用是全新 shell，独立调 `env` 看不到注入的 `ZCODE_SECRET_*`，天然安全；② 同一条命令里「密钥引用 + env/printenv/裸 set/裸 export」会被钩子直接拒绝（同命令倾泻）。也不要在倾泻命令里围绕 `ZCODE_SECRET`/`zcode` 词根探测或 grep。
+  注意：钩子按命令中**实际引用的名字**注入——引用 `$GITHUB_TOKEN` 就注入 `GITHUB_TOKEN`，引用 `$GH_TOKEN` 就注入 `GH_TOKEN`。需要哪个名字就在命令里写哪个名字的引用。
+- **倾泻意图放独立调用**：查看环境变量、`set -e` 选项、`export FOO=1` 这类与密钥无关的操作，放在**单独一次 Bash 调用**里，不要和带密钥引用的命令拼在同一条。原因：① 每次调用是全新 shell，注入变量不跨调用存活，独立调 `env` 看不到任何密钥，天然安全；② 同一条命令里「密钥引用 + env/printenv/裸 set/裸 export」会被钩子直接拒绝（同命令倾泻）。
 - **不要 echo/打印凭据**：`echo $GH_TOKEN` 会把值送进你的上下文（出口防线尚未实现），等于绕过整个机制。
 
 ## 已配置条目

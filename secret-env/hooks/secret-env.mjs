@@ -1,8 +1,9 @@
 // secret-env：密钥从私有库直达子进程环境，模型上下文永不见值。
 // 机制（DESIGN.md §2/§5/§6）：
 //   - PreToolUse(Bash)：扫描命令文本中的显式引用（{{secret:NAME}} 占位符 或 已配置的 $NAME），
-//     经 provider 解出真值写入 0600 临时 env 文件，命令改写为 `. <envfile>; <原命令>`，
-//     引用文本改写为 ${ZCODE_SECRET_n}。文本与值分离，日志只见路径。
+//     经 provider 解出真值写入 0600 临时 env 文件（export 周知原名），命令前缀 source：
+//     `. <envfile>; <原命令>`。命令文本零改写，原名注入——隐式读取（如 git 认 GH_TOKEN）
+//     由 SKILL 引导 agent 显式化引用来触发。文本与值分离，日志只见路径。
 //   - 单引号内引用不展开 → 直接拒绝（exit 2），不静默产出无效引用。
 //   - dump 黑名单：命令同时含密钥引用与倾泻意图（env/printenv/裸 set/裸 export/-p）→ 拒绝；
 //     跨调用裸 env 不拦（每次 Bash 调用全新 shell，注入变量不跨调用存活）。
@@ -117,9 +118,9 @@ function scanRefs(command, config) {
     deny(`secret-env：占位符 {{secret:${unknownPlaceholders.join("、")}}} 未在 secrets.json 配置。宁可失败：请修正名字或先配置。`);
   }
 
-  // ② 显式 $NAME（词边界；\$$NAME 转义跳过）
+  // ② 显式 $NAME / ${NAME}（词边界；\$ 转义跳过）
   for (const [alias, info] of config) {
-    const re = new RegExp(`(?<![A-Za-z0-9_])\\$${alias}(?![A-Za-z0-9_])`, "g");
+    const re = new RegExp(`(?<![A-Za-z0-9_\\$])\\$\{?${alias}(?![A-Za-z0-9_])`, "g");
     while ((m = re.exec(command))) {
       if (m.index > 0 && command[m.index - 1] === "\\") continue;
       tokens.push({ token: m[0], start: m.index, name: info.canonical, inSingle: inSingleQuote(m.index) });
@@ -190,11 +191,7 @@ const sessionId = payload?.session_id ?? "";
 
 const tokens = scanRefs(command, config);
 if (tokens.length === 0) {
-  // 无引用命令：唯一缺口是围绕注入变量名（ZCODE_SECRET_*）的探测/过滤（set | grep ZCODE 等），
-  // 裸 env 打不到它们（未导出到本 shell）。探针放宽到 zcode 词根。
-  if (isDumpCommand(command) && /zcode/i.test(command)) {
-    deny(`secret-env：拒绝围绕注入变量（ZCODE_SECRET_*）的探测。命令里写密钥引用（如 "$GH_TOKEN"）即可。`);
-  }
+  // 无引用命令：什么都不注入，本 shell 里没有任何密钥可倾泻，直接放行。
   allow();
 }
 
@@ -221,26 +218,20 @@ for (const name of canonicalNames) {
   }
 }
 
-// 写 env 文件（0600），单引号安全包装
+// 写 env 文件（0600），单引号安全包装。注入用命令文本中实际引用的名字（原名）：
+// 别名引用（$GITHUB_TOKEN）按别名注入，canonical 引用按周知名注入——原命令零改写。
+const exportNames = new Map(); // 引用名 → canonical
+for (const t of tokens) {
+  const refName = t.token.replace(/^\$\{?/, "").replace(/\}$/, "");
+  exportNames.set(refName, t.name);
+}
 mkdirSync(ENV_DIR, { recursive: true });
 const envFile = join(ENV_DIR, `${sessionId || "anon"}-${Date.now()}.sh`);
-const lines = canonicalNames.map((name, i) => `export ZCODE_SECRET_${i}=${shellSingleQuote(values.get(name))}`);
+const lines = [...exportNames].map(([refName, canonical]) => `export ${refName}=${shellSingleQuote(values.get(canonical))}`);
 writeFileSync(envFile, lines.join("\n") + "\n", { mode: 0o600 });
 
-// 改写命令：按出现位置从后往前替换，token → ${ZCODE_SECRET_n}
-const tokenToVar = new Map(); // token 字符串 → 变量名（按 canonical 分配）
-canonicalNames.forEach((name, i) => { for (const [alias, info] of config) if (info.canonical === name) tokenToVar.set(alias, `ZCODE_SECRET_${i}`); });
-let rewritten = command;
-const sorted = [...tokens].sort((a, b) => b.start - a.start);
-for (const t of sorted) {
-  // 别名 token（$GITHUB_TOKEN）也映射到同一 canonical 的变量
-  const aliasMatch = t.token.startsWith("$") ? t.token.slice(1) : null;
-  const varName = aliasMatch ? tokenToVar.get(aliasMatch) : tokenToVar.get(t.name);
-  rewritten = rewritten.slice(0, t.start) + `\${${varName}}` + rewritten.slice(t.start + t.token.length);
-}
-
-// 前缀 source env 文件
-const newCommand = `. ${shellSingleQuote(envFile)}; ${rewritten}`;
+// 前缀 source env 文件，命令文本原样保留
+const newCommand = `. ${shellSingleQuote(envFile)}; ${command}`;
 log(`inject session=${sessionId} names=${canonicalNames.join(",")} file=${envFile}`);
 
 allow({ ...payload.tool_input, command: newCommand });
