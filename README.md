@@ -27,6 +27,12 @@ bun link   # run inside the repo; registers the secret-env command (or npm i -g 
 
 ZCode shell: Plugin Marketplace → Add Marketplace, paste this repo root → Install **secret-env** (hooks.json points at the global command).
 
+opencode shell: copy the adapter into the plugins directory (V2 API, `tool.execute.before` rewrites `output.args.command` with the same source prefix):
+
+```bash
+cp adapters/opencode.ts ~/.config/opencode/plugins/secret-env.ts   # or project .opencode/plugins/
+```
+
 Vault a credential (run in your own terminal, hidden input, the value never touches the conversation):
 
 ```bash

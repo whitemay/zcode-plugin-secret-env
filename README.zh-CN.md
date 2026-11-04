@@ -27,6 +27,12 @@ bun link   # 仓库内执行，注册 secret-env 全局命令（或 npm i -g .�
 
 ZCode 壳：Plugin Marketplace → Add Marketplace 粘贴本仓库根 → Install **secret-env**（hooks.json 指向全局命令）。
 
+opencode 壳：把适配器复制进插件目录（V2 API，`tool.execute.before` 改写 `output.args.command` 加同一 source 前缀）：
+
+```bash
+cp adapters/opencode.ts ~/.config/opencode/plugins/secret-env.ts   # 或项目级 .opencode/plugins/
+```
+
 凭据入库（用户终端执行，隐藏输入，值不经对话）：
 
 ```bash
