@@ -1,5 +1,6 @@
 # secret-env 插件设计记录
 
+> 英文摘要（决策速览，面向贡献者）：[DESIGN.en.md](DESIGN.en.md)。本文为完整设计沿革（中文）。
 > 2026-11-04 与用户讨论定稿的设计结论。探针插件（`secret-env-probe/`）验证机制可行性后，按本文档实现正式插件。
 > 策略：先做成项目内插件（`plugins/secret-env/`），成熟后迁独立仓库（`~/github/zcode-plugins/` 形态）。
 
