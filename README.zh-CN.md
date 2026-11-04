@@ -33,6 +33,19 @@ opencode 壳：把适配器复制进插件目录（V2 API，`tool.execute.before
 cp adapters/opencode.ts ~/.config/opencode/plugins/secret-env.ts   # 或项目级 .opencode/plugins/
 ```
 
+DSH（DeepSeek Harness）壳：symlink cordis 插件包 + 在 profile 用户补丁层插一行（`tools/execute` waterfall 改写 `exec.arguments.command`，经探针真机验证，见 docs）：
+
+```bash
+mkdir -p ~/.dsh/profiles/node_modules/@local
+ln -sfn "$PWD/adapters/dsh/secret-env" ~/.dsh/profiles/node_modules/@local/secret-env
+# 然后在 ~/.dsh/profiles/<profile>/cordis.patch.yml 加：
+# - insert:
+#     - id: secret-env
+#       name: '@local/secret-env'
+#       config: {}
+# 重启 DSH 加载新模块
+```
+
 凭据入库（用户终端执行，隐藏输入，值不经对话）：
 
 ```bash

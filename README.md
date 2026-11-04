@@ -33,6 +33,19 @@ opencode shell: copy the adapter into the plugins directory (V2 API, `tool.execu
 cp adapters/opencode.ts ~/.config/opencode/plugins/secret-env.ts   # or project .opencode/plugins/
 ```
 
+DSH (DeepSeek Harness) shell: link the cordis plugin package and insert a row in the profile's user patch layer (a verified `tools/execute` waterfall rewrite of `exec.arguments.command` — see probe record in docs):
+
+```bash
+mkdir -p ~/.dsh/profiles/node_modules/@local
+ln -sfn "$PWD/adapters/dsh/secret-env" ~/.dsh/profiles/node_modules/@local/secret-env
+# then add to ~/.dsh/profiles/<profile>/cordis.patch.yml:
+# - insert:
+#     - id: secret-env
+#       name: '@local/secret-env'
+#       config: {}
+# restart DSH to load the new module
+```
+
 Vault a credential (run in your own terminal, hidden input, the value never touches the conversation):
 
 ```bash
