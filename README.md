@@ -19,11 +19,24 @@ A PreToolUse(Bash) hook scans the command text for **explicit references** (a `{
 
 ## Install
 
-ZCode → Plugin Marketplace → Add Marketplace, paste this repo root (marketplace root = repo root) → Install **secret-env**.
+This project is an npm package plus thin per-host shells. Global command (the real body):
+
+```bash
+bun link   # run inside the repo; registers the secret-env command (or npm i -g .)
+```
+
+ZCode shell: Plugin Marketplace → Add Marketplace, paste this repo root → Install **secret-env** (hooks.json points at the global command).
+
+Vault a credential (run in your own terminal, hidden input, the value never touches the conversation):
+
+```bash
+secret-env add GH_TOKEN --provider keychain --desc 'GitHub token' --alias GITHUB_TOKEN
+secret-env list
+```
 
 ## Configuration
 
-`~/.config/secret-env/secrets.json` (700 dir / 600 file; kept outside the plugin dir — the install cache is a snapshot and gets overwritten on refresh):
+`~/.config/secret-env/secrets.json` (700 dir / 600 file; maintained by `secret-env add`, or hand-written):
 
 ```json
 {

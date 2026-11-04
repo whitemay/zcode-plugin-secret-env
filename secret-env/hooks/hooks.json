@@ -5,8 +5,8 @@
         "hooks": [
           {
             "type": "process",
-            "command": "bun",
-            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/secret-env-list.mjs"],
+            "command": "secret-env",
+            "args": ["list", "--inject"],
             "timeoutMs": 5000,
             "statusMessage": "secret-env 清单注入"
           }
@@ -19,8 +19,8 @@
         "hooks": [
           {
             "type": "process",
-            "command": "bun",
-            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/secret-env.mjs"],
+            "command": "secret-env",
+            "args": ["hook", "zcode"],
             "timeoutMs": 15000,
             "statusMessage": "secret-env"
           }

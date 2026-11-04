@@ -19,11 +19,24 @@ PreToolUse(Bash) 钩子扫描命令文本中的**显式引用**（`{{secret:NAME
 
 ## 安装
 
-ZCode → Plugin Marketplace → Add Marketplace 粘贴本仓库根路径（市场根 = 仓库根）→ Install **secret-env**。
+本项目是 npm 包 + 各宿主薄壳。全局命令（真身）：
+
+```bash
+bun link   # 仓库内执行，注册 secret-env 全局命令（或 npm i -g .）
+```
+
+ZCode 壳：Plugin Marketplace → Add Marketplace 粘贴本仓库根 → Install **secret-env**（hooks.json 指向全局命令）。
+
+凭据入库（用户终端执行，隐藏输入，值不经对话）：
+
+```bash
+secret-env add GH_TOKEN --provider keychain --desc 'GitHub 令牌' --alias GITHUB_TOKEN
+secret-env list
+```
 
 ## 配置
 
-`~/.config/secret-env/secrets.json`（700 目录 / 600 文件；放插件目录外——安装缓存是快照，refresh 即覆盖）：
+`~/.config/secret-env/secrets.json`（700 目录 / 600 文件；`secret-env add` 自动维护，也可手写）：
 
 ```json
 {

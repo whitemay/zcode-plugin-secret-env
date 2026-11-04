@@ -1,0 +1,193 @@
+#!/usr/bin/env bun
+// secret-env 全局 CLI。与宿主无关的三个入口：
+//   secret-env add <NAME> ...   用户终端执行：交互收值（隐藏输入）→ 入库 → 登记 secrets.json
+//   secret-env list             打印名字+别名+描述清单（无真值）
+//   secret-env hook zcode       ZCode PreToolUse 钩子协议壳（stdin/stdout JSON）
+// 真值只在：用户终端输入 → provider 存储 → 子进程环境。任何环节不进模型上下文。
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { argv, exit } from "bun";
+import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeEnvFile, shellSingleQuote } from "./core.mjs";
+
+const LOG = "/tmp/zcode-secret-env.log";
+const CONFIG_PATH = join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json");
+
+function log(msg) {
+  try { appendFileSync(LOG, `[${new Date().toISOString()}] ${msg}\n`); } catch {}
+}
+
+// ---------- add：交互入库 + 登记 ----------
+// 用法：secret-env add NAME [--alias A]... [--desc D]
+//        --provider keychain [--service S]   存 macOS 钥匙串（默认 service = secret-env-<NAME>）
+//        --provider viking --path c/t[/f]     值已由用户在 OpenViking 放好，只登记映射
+//        --provider bitwarden --item I        同上，只登记映射
+function parseAddArgs(args) {
+  const opts = { aliases: [], provider: "keychain" };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--alias") opts.aliases.push(args[++i]);
+    else if (a === "--desc") opts.description = args[++i];
+    else if (a === "--provider") opts.provider = args[++i];
+    else if (a === "--service") opts.service = args[++i];
+    else if (a === "--path") opts.path = args[++i];
+    else if (a === "--item") opts.item = args[++i];
+    else if (!a.startsWith("--")) opts.name ??= a;
+    else { console.error(`未知参数：${a}`); exit(2); }
+  }
+  return opts;
+}
+
+async function promptHiddenValue(label) {
+  // 用户终端隐藏输入：read -rs 在 bash 子进程里关掉回显，值经 stdout 回到本进程内存
+  const r = Bun.spawnSync(["bash", "-c", `read -rs -p ${JSON.stringify(label)} v && echo "$v"`], { stdin: "inherit", stdout: "pipe" });
+  const v = r.stdout.toString().replace(/\n$/, "");
+  if (!v) { console.error("\n空值，放弃。"); exit(2); }
+  console.log("");
+  return v;
+}
+
+function updateConfig(name, def) {
+  const raw = {};
+  // 保留现有条目——只对稳定路径文件做增量改写
+  try { Object.assign(raw, JSON.parse(readFileSync(CONFIG_PATH, "utf8"))); } catch {}
+  raw[name] = def;
+  writeFileSync(CONFIG_PATH, JSON.stringify(raw, null, 2) + "\n", { mode: 0o600 });
+  return raw;
+}
+
+async function cmdAdd(args) {
+  const opts = parseAddArgs(args);
+  if (!opts.name) { console.error("用法：secret-env add <NAME> [--alias A]... [--desc D] --provider keychain|viking|bitwarden [--service S|--path P|--item I]"); exit(2); }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(opts.name)) { console.error(`名字不合环境变量名规范：${opts.name}`); exit(2); }
+
+  let uri;
+  if (opts.provider === "keychain") {
+    const service = opts.service ?? `secret-env-${opts.name.toLowerCase()}`;
+    const value = await promptHiddenValue(`输入 ${opts.name} 的值（隐藏输入，回车确认）: `);
+    const r = await Bun.$`security add-generic-password -a ${process.env.USER} -s ${service} -w ${value} -U`.nothrow();
+    if (r.exitCode !== 0) { console.error(`钥匙串写入失败（exit=${r.exitCode}）：${r.stderr.toString().trim()}`); exit(2); }
+    uri = `keychain://${service}`;
+  } else if (opts.provider === "viking") {
+    if (!opts.path) { console.error("viking 需要 --path <category>/<target>[/<field>]"); exit(2); }
+    // 值由用户经 ov 自行放入 privacy 区域，这里只登记映射
+    uri = `viking://${opts.path}`;
+  } else if (opts.provider === "bitwarden") {
+    if (!opts.item) { console.error("bitwarden 需要 --item <item>"); exit(2); }
+    uri = `bitwarden://${opts.item}`;
+  } else {
+    console.error(`未知 provider：${opts.provider}`); exit(2);
+  }
+
+  const raw = updateConfig(opts.name, { uri, ...(opts.aliases.length ? { aliases: opts.aliases } : {}), ...(opts.description ? { description: opts.description } : {}) });
+  console.log(`已登记 ${opts.name} → ${uri}`);
+  console.log(`secrets.json 现有条目：${Object.keys(raw).join("、")}`);
+  console.log("下个 session 的清单注入将自动包含新条目。");
+}
+
+function cmdList() {
+  const config = loadConfig();
+  if (config.size === 0) { console.log("(空)"); return; }
+  const entries = new Map();
+  for (const [name, info] of config) {
+    if (info.canonical === name) entries.set(name, { aliases: [], description: info.description });
+    else entries.get(info.canonical)?.aliases.push(name);
+  }
+  for (const [name, { aliases, description }] of entries) {
+    console.log(`${name}${aliases.length ? `（别名：${aliases.join("、")}）` : ""}${description ? `：${description}` : ""}`);
+  }
+}
+
+// ---------- list --inject：SessionStart 注入壳（输出 JSON additionalContext） ----------
+function cmdInjectList() {
+  const config = loadConfig();
+  if (config.size === 0) process.exit(0);
+  const entries = new Map();
+  for (const [name, info] of config) {
+    if (info.canonical === name) entries.set(name, { aliases: [], description: info.description });
+    else entries.get(info.canonical)?.aliases.push(name);
+  }
+  const lines = [
+    "已配置密钥（secret-env，值永不出现在上下文，命令中显式引用即可注入子进程环境）：",
+    ...[...entries].map(([name, { aliases, description }]) => {
+      let line = `- ${name}`;
+      if (aliases.length) line += `（别名：${aliases.join("、")}）`;
+      if (description) line += `：${description}`;
+      return line;
+    }),
+    "用法：命令文本写 $NAME 或 ${NAME}（双引号内），隐式读取的工具写成 NAME=$NAME cmd；禁止单引号包引用、禁止命令含 env/printenv/裸 set/export。",
+    "详见 secret-env skill。",
+  ];
+  console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } }));
+}
+
+// ---------- hook zcode：ZCode PreToolUse 协议壳 ----------
+// 逻辑与旧 hooks/secret-env.mjs 完全一致：allow + updatedInput；拒绝 exit 2。
+async function cmdHookZcode() {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  let payload = null;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { log("[parse-error] 放行"); process.exit(0); }
+
+  const allow = (updated) => {
+    const out = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } };
+    if (updated) out.hookSpecificOutput.updatedInput = updated;
+    console.log(JSON.stringify(out));
+    process.exit(0);
+  };
+  const deny = (reason) => { console.error(reason); process.exit(2); };
+
+  if (payload?.tool_name !== "Bash") allow();
+  const command = payload?.tool_input?.command ?? "";
+  if (!command) allow();
+
+  const config = loadConfig();
+  if (config.size === 0) allow(); // 未配置 = 纯旁路
+
+  cleanStale();
+
+  const sessionId = payload?.session_id ?? "";
+  const tokens = scanRefs(command, config, deny);
+  if (tokens.length === 0) allow(); // 无引用 = 零注入，无可倾泻
+
+  const bad = tokens.filter((t) => t.inSingle);
+  if (bad.length) {
+    deny(`secret-env：引用位于单引号内不会被展开（${[...new Set(bad.map((t) => t.token))].join("、")}）。请改用双引号包裹，例如 "$GH_TOKEN"。`);
+  }
+  if (isDumpCommand(command)) {
+    deny(`secret-env：命令同时含密钥引用与环境倾泻命令（env/printenv/set/export），会打印注入值。请把倾泻意图从命令中移除。`);
+  }
+
+  const canonicalNames = [...new Set(tokens.map((t) => t.name))];
+  const values = new Map();
+  for (const name of canonicalNames) {
+    const info = config.get(name);
+    try {
+      values.set(name, await resolveValue(info.uri));
+    } catch (e) {
+      deny(`secret-env：解析 ${name}（${info.uri}）失败：${e.message}`);
+    }
+  }
+
+  const exportNames = new Map();
+  for (const t of tokens) {
+    const refName = t.token.replace(/^\$\{?/, "").replace(/\}$/, "");
+    exportNames.set(refName, t.name);
+  }
+
+  const envFile = writeEnvFile(sessionId, exportNames, values);
+  const newCommand = `. ${shellSingleQuote(envFile)}; ${command}`;
+  log(`inject session=${sessionId} names=${[...exportNames.keys()].join(",")} file=${envFile}`);
+
+  allow({ ...payload.tool_input, command: newCommand });
+}
+
+// ---------- 入口 ----------
+const [cmd, ...rest] = argv.slice(2);
+if (cmd === "add") await cmdAdd(rest);
+else if (cmd === "list" && rest[0] === "--inject") cmdInjectList();
+else if (cmd === "list") cmdList();
+else if (cmd === "hook" && rest[0] === "zcode") await cmdHookZcode();
+else {
+  console.error("用法：secret-env add|list|hook zcode");
+  exit(cmd ? 2 : 0);
+}

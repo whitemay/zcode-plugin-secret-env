@@ -14,7 +14,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // 加载顺序：~/.config/secret-env/secrets.json（稳定路径，marketplace refresh 不覆盖）→ 插件根（兼容旧位）。
 // 两处合并（稳定路径优先，同名后者不覆盖前者）：凭据映射不随插件版本走——安装缓存是快照，refresh 即覆盖。
 export function loadConfig() {
-  const candidates = [join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json"), join(HERE, "secrets.json")];
+  const candidates = [join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json"), join(HERE, "secret-env", "secrets.json")];
   const map = new Map(); // 别名/主键 → {canonical, uri}
   for (const path of candidates) {
     try {

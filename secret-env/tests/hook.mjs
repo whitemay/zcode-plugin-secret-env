@@ -3,7 +3,7 @@
 import { writeFileSync, unlinkSync } from "node:fs";
 
 const D = "$";
-const HOOK = new URL("../hooks/secret-env.mjs", import.meta.url).pathname;
+const HOOK = new URL("../../cli.mjs", import.meta.url).pathname + " hook zcode";
 const TMP = "/tmp/secret-env-test-payload.json";
 
 function run(command, sessionId = "test") {
