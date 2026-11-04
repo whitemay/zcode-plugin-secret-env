@@ -1,23 +1,25 @@
 # zcode-plugin-secret-env
 
-ZCode 插件：**密钥从私有库直达 Bash 子进程环境，模型上下文只见占位符/变量名，永不见值。**
+ZCode plugin: **secrets travel straight from your private vault into the Bash subprocess environment — the model context only ever sees placeholder / variable names, never values.**
 
-## 机制
+[简体中文](./README.zh-CN.md) | English
 
-PreToolUse(Bash) 钩子扫描命令文本中的**显式引用**（`{{secret:NAME}}` 占位符或已配置的周知 `$VAR`），经 provider 解出真值写入 0600 临时 env 文件（按命令中实际引用的名字 export，即周知原名），命令仅加 source 前缀后放行：`. <envfile>; <原命令>`。命令文本零改写；隐式读环境变量的场景由 skill 引导 agent 显式化引用来触发。文本与值分离——审计日志只见 env 文件路径。
+## How it works
 
-- **provider**：`keychain://`（macOS 钥匙串）/ `viking://`（OpenViking privacy 层，`ov privacy resolve`）/ `bitwarden://`（Bitwarden CLI）
-- **dump 黑名单**：命令同时含密钥引用与倾泻意图（`env` / `printenv` / 裸 `set` / 裸 `export`）才拒绝
-- **单引号禁忌**：引用落在单引号内不会被展开 → 整条命令拒绝（宁可失败，不做魔法）
-- **显式化约定**：钩子是纯文本扫描的机械层；工具隐式消费环境变量（如裸 `gh pr list` 读 `GH_TOKEN`）由模型按 skill 引导显式写成 `GH_TOKEN=$GH_TOKEN gh pr list`
+A PreToolUse(Bash) hook scans the command text for **explicit references** (a `{{secret:NAME}}` placeholder or a configured well-known `$VAR`), resolves the true value via a provider into a 0600 temp env file (exported under the name actually referenced in the command, i.e. the well-known original name), and lets the command through with only a source prefix: `. <envfile>; <original command>`. The command text is never rewritten; for implicit env consumers the skill guides the agent to make the reference explicit. Text and value are separated — the audit log only ever sees the env file path.
 
-## 安装
+- **Providers**: `keychain://` (macOS Keychain) / `viking://` (OpenViking privacy layer via `ov privacy resolve`) / `bitwarden://` (Bitwarden CLI)
+- **Dump blacklist**: a command is rejected only when it contains both a secret reference and a dump intent (`env` / `printenv` / bare `set` / bare `export`) at command position
+- **Single-quote taboo**: a reference inside single quotes would never expand → the whole command is rejected (fail loudly, no magic)
+- **Explicit-reference convention**: the hook is a dumb text scanner; tools that consume env vars implicitly (e.g. bare `gh pr list` reading `GH_TOKEN`) are handled by the model per the skill, written explicitly as `GH_TOKEN=$GH_TOKEN gh pr list`
 
-ZCode → Plugin Marketplace → Add Marketplace 粘贴本仓库根路径（市场根 = 仓库根）→ Install **secret-env**。
+## Install
 
-## 配置
+ZCode → Plugin Marketplace → Add Marketplace, paste this repo root (marketplace root = repo root) → Install **secret-env**.
 
-`~/.config/secret-env/secrets.json`（700 目录 / 600 文件；放插件目录外——安装缓存是快照，refresh 即覆盖）：
+## Configuration
+
+`~/.config/secret-env/secrets.json` (700 dir / 600 file; kept outside the plugin dir — the install cache is a snapshot and gets overwritten on refresh):
 
 ```json
 {
@@ -26,12 +28,12 @@ ZCode → Plugin Marketplace → Add Marketplace 粘贴本仓库根路径（市�
 }
 ```
 
-模板见 [secret-env/secrets.example.json](./secret-env/secrets.example.json)。配置为空时钩子纯旁路。
+See [secret-env/secrets.example.json](./secret-env/secrets.example.json) for the template. With an empty config the hook is a pure bypass.
 
-## 已知边界（诚实声明）
+## Known limitations (honest disclosure)
 
-- **出口无脱敏**：ZCode PostToolUse 输出无 tool_result 改写能力（harness 源码核查定案），`echo $GH_TOKEN` 这类值回流无自动防线，靠 skill 明令禁止
-- **依赖 skill 引导质量**：模型没写显式引用时注入不生效——设计如此，宁可失败
-- viking:// provider 依赖 `ov` CLI（≥0.5.1）与本地 OpenViking 服务
+- **No egress sanitization**: ZCode PostToolUse output has no tool_result rewrite capability (verified against harness source), so `echo $GH_TOKEN` reflow has no automatic defense — forbidden by the skill only
+- **Depends on skill guidance quality**: without an explicit reference in the command, injection does not happen — by design, fail loudly
+- The `viking://` provider requires the `ov` CLI (≥0.5.1) and a local OpenViking service
 
-设计沿革与机制验证记录见 [docs/DESIGN.md](./docs/DESIGN.md)。
+Design history and mechanism verification records: [docs/DESIGN.md](./docs/DESIGN.md) (Chinese).
