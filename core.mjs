@@ -30,14 +30,70 @@ export function loadConfig() {
 }
 
 // ---------- provider 抽象（scheme 路由） ----------
+// system provider（uri scheme 沿用 keychain://）：按平台路由到本机密钥库。
+// 执行前先做平台判断 + 二进制探测，探测失败给出人话指引——不等运行失败。
+export function systemBackend() {
+  const platform = process.platform;
+  const requireBin = (cmd, hint) => {
+    if (!Bun.which(cmd)) throw new Error(`本机系统密钥库需要 ${cmd}，未找到。${hint}`);
+    return cmd;
+  };
+  if (platform === "darwin") {
+    requireBin("security", "macOS 自带，通常不会缺。");
+    return {
+      backend: "macos-keychain",
+      read: async (service) => {
+        const r = await Bun.$`security find-generic-password -s ${service} -w`.quiet().nothrow();
+        if (r.exitCode !== 0) throw new Error(`security find-generic-password 未取到 ${service}（exit=${r.exitCode} err=${r.stderr.toString().slice(0, 120)}）`);
+        return r.stdout.toString().trim();
+      },
+      write: async (service, value) => {
+        const r = await Bun.$`security add-generic-password -a ${process.env.USER} -s ${service} -w ${value} -U`.quiet().nothrow();
+        if (r.exitCode !== 0) throw new Error(`security add-generic-password 失败（exit=${r.exitCode} err=${r.stderr.toString().slice(0, 120)}）`);
+      },
+      remove: async (service) => {
+        const r = await Bun.$`security delete-generic-password -s ${service}`.quiet().nothrow();
+        return r.exitCode === 0;
+      },
+    };
+  }
+  if (platform === "linux") {
+    requireBin("secret-tool", "安装 libsecret-tools（Debian/Ubuntu）或 libsecret（Arch），并确保 gnome-keyring 在运行；无头服务器建议改用 bitwarden provider。");
+    return {
+      backend: "linux-secret-service",
+      read: async (service) => {
+        const r = await Bun.$`secret-tool lookup service ${service}`.quiet().nothrow();
+        const out = r.stdout.toString().trim();
+        if (r.exitCode !== 0 || !out) throw new Error(`secret-tool lookup 未取到 ${service}（exit=${r.exitCode}）——确认 keyring daemon 已解锁`);
+        return out;
+      },
+      write: async (service, value) => {
+        // 值经 stdin 传递，不落 argv
+        const proc = Bun.spawn(["secret-tool", "store", "--label", service, "service", service], { stdin: "pipe" });
+        proc.stdin.write(value);
+        proc.stdin.end();
+        const code = await proc.exited;
+        if (code !== 0) throw new Error(`secret-tool store 失败（exit=${code}）`);
+      },
+      remove: async (service) => {
+        const r = await Bun.$`secret-tool clear service ${service}`.quiet().nothrow();
+        return r.exitCode === 0;
+      },
+    };
+  }
+  if (platform === "win32") {
+    throw new Error("Windows 暂无 system provider 实现（Credential Manager 需 PowerShell 模块）。请改用 bitwarden provider。");
+  }
+  throw new Error(`未知平台：${platform}，无 system provider。`);
+}
+
 export async function resolveValue(uri) {
   const scheme = uri.split("://")[0];
   const rest = uri.slice(scheme.length + 3);
   if (scheme === "keychain") {
-    // keychain://<service> → security find-generic-password
-    const r = await Bun.$`security find-generic-password -s ${rest} -w`.quiet().nothrow();
-    const out = r.stdout.toString().trim();
-    if (r.exitCode !== 0 || !out) throw new Error(`keychain 未取到 ${rest}（exit=${r.exitCode} err=${r.stderr.toString().slice(0, 120)}）`);
+    const backend = systemBackend(); // 探测失败 → 人话错误，而非命令跑失败
+    const out = await backend.read(rest);
+    if (!out) throw new Error(`系统密钥库未取到 ${rest}`);
     return out;
   }
   if (scheme === "viking") {

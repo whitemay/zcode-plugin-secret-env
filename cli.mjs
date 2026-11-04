@@ -7,7 +7,7 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { argv } from "bun";
-import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeEnvFile, shellSingleQuote } from "./core.mjs";
+import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeEnvFile, shellSingleQuote, systemBackend } from "./core.mjs";
 
 const LOG = "/tmp/zcode-secret-env.log";
 const CONFIG_PATH = join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json");
@@ -97,8 +97,13 @@ async function cmdAdd(args) {
   } else if (opts.provider === "system") {
     const service = opts.service ?? serviceFromHuman(opts.name);
     const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
-    const r = await Bun.$`security add-generic-password -a ${process.env.USER} -s ${service} -w ${value} -U`.nothrow();
-    if (r.exitCode !== 0) { console.error(`钥匙串写入失败（exit=${r.exitCode}）：${r.stderr.toString().trim()}`); process.exit(2); }
+    try {
+      const backend = systemBackend(); // 平台判断 + 二进制探测，先于人话报错
+      await backend.write(service, value);
+    } catch (e) {
+      console.error(`入库失败：${e.message}`);
+      process.exit(2);
+    }
     uri = `keychain://${service}`;
   } else if (opts.provider === "viking") {
     if (!opts.path) { console.error("viking 需要 --path <category>/<target>[/<field>]"); process.exit(2); }
@@ -130,8 +135,13 @@ async function cmdRemove(args) {
 
   if (purge && def.uri.startsWith("keychain://")) {
     const service = def.uri.slice("keychain://".length);
-    const r = await Bun.$`security delete-generic-password -s ${service}`.nothrow();
-    console.log(r.exitCode === 0 ? `钥匙串条目已删除（service=${service}）` : `钥匙串删除未命中（service=${service}，exit=${r.exitCode}）——可能已不存在，继续`);
+    try {
+      const backend = systemBackend(); // 平台判断 + 二进制探测，先于人话报错
+      const hit = await backend.remove(service);
+      console.log(hit ? `系统密钥库条目已删除（service=${service}）` : `删除未命中（service=${service}）——可能已不存在，继续`);
+    } catch (e) {
+      console.error(`--purge 失败：${e.message}（映射仍会删除）`);
+    }
   } else if (purge) {
     console.log(`${def.uri} 的 --purge 暂未支持（system 以外请用各自工具清理），只删映射。`);
   }
