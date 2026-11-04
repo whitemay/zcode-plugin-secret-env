@@ -1,15 +1,32 @@
 {
-  "name": "secret-env",
+  "name": "@foperate/secret-env",
   "version": "0.1.0",
   "description": "密钥从私有库直达 Bash 子进程环境，模型上下文永不见值。全局 CLI + 多宿主适配（ZCode / opencode / DSH）。",
   "type": "module",
+  "license": "MIT",
+  "author": "whitemay",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/whitemay/zcode-plugin-secret-env.git"
+  },
   "bin": {
     "secret-env": "./cli.mjs"
   },
+  "files": [
+    "cli.mjs",
+    "core.mjs",
+    "adapters/",
+    "secret-env/secrets.example.json",
+    "README.md",
+    "README.zh-CN.md",
+    "!adapters/dsh/secret-env-probe/",
+    "!adapters/dsh/probe-overlay.yml",
+    "!adapters/tests/"
+  ],
   "scripts": {
     "test": "bun secret-env/tests/hook.mjs"
   },
   "engines": {
-    "runtime": "bun"
+    "node": ">=18"
   }
 }

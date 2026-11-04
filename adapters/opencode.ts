@@ -9,7 +9,7 @@ type Core = typeof import("./../core.mjs");
 
 async function loadCore(): Promise<Core> {
   try {
-    return (await import("secret-env/core.mjs")) as Core;
+    return (await import("@foperate/secret-env/core.mjs")) as Core;
   } catch {
     return (await import(process.env.HOME + "/github/zcode-plugin-secret-env/core.mjs")) as Core;
   }
