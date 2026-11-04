@@ -25,7 +25,7 @@ description: 密钥注入约定——执行需要凭据的 Bash 命令时如何�
   ```bash
   GH_TOKEN=$GH_TOKEN gh pr list
   ```
-- **禁止 dump**：本会话注入过密钥后，`env` / `printenv` / `set` / `export` 会被钩子直接拒绝。需要看环境变量名时先想别的办法（如 `git config -l`），不要碰这四个词。
+- **倾泻意图放独立调用**：查看环境变量、`set -e` 选项、`export FOO=1` 这类与密钥无关的操作，放在**单独一次 Bash 调用**里，不要和带密钥引用的命令拼在同一条。原因：① 每次调用是全新 shell，独立调 `env` 看不到注入的 `ZCODE_SECRET_*`，天然安全；② 同一条命令里「密钥引用 + env/printenv/裸 set/裸 export」会被钩子直接拒绝（同命令倾泻）。也不要在倾泻命令里围绕 `ZCODE_SECRET`/`zcode` 词根探测或 grep。
 - **不要 echo/打印凭据**：`echo $GH_TOKEN` 会把值送进你的上下文（出口防线尚未实现），等于绕过整个机制。
 
 ## 已配置条目

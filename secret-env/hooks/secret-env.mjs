@@ -4,16 +4,16 @@
 //     经 provider 解出真值写入 0600 临时 env 文件，命令改写为 `. <envfile>; <原命令>`，
 //     引用文本改写为 ${ZCODE_SECRET_n}。文本与值分离，日志只见路径。
 //   - 单引号内引用不展开 → 直接拒绝（exit 2），不静默产出无效引用。
-//   - dump 黑名单：本会话注入过密钥后，命令命中 env/printenv/set/export → 拒绝。
+//   - dump 黑名单：命令同时含密钥引用与倾泻意图（env/printenv/裸 set/裸 export/-p）→ 拒绝；
+//     跨调用裸 env 不拦（每次 Bash 调用全新 shell，注入变量不跨调用存活）。
 // 输出口径：allow + updatedInput；拒绝一律 exit 2 + stderr 提示（宁可失败，不做魔法）。
-import { appendFileSync, mkdirSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync, chmodSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const LOG = "/tmp/zcode-secret-env.log";
 const ENV_DIR = join(tmpdir(), "secret-env-injections");
-const STATE_DIR = join(tmpdir(), "secret-env-state");
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STALE_MS = 15 * 60 * 1000;
 
@@ -128,20 +128,32 @@ function scanRefs(command, config) {
   return tokens;
 }
 
-// ---------- dump 黑名单 ----------
-function loadSessionState(sessionId) {
-  if (!sessionId) return null;
-  try { return JSON.parse(readFileSync(join(STATE_DIR, `${sessionId}.json`), "utf8")); } catch { return null; }
+// ---------- dump 黑名单（2026-11-04 用户拍板收窄） ----------
+// 仅当命令**同时含密钥引用与倾泻意图**才拦（同命令倾泻：如 GH_TOKEN=$GH_TOKEN env 会打印值）。
+// 跨调用裸 env 不拦——每次 Bash 调用都是全新 shell，注入变量不跨调用存活，拦了纯属误伤。
+// 倾泻意图按命令位置判定：首词 / VAR=value 赋值前缀后 / ;&&||| 分隔后的词。
+// env/printenv 任意参数都算；set 仅裸词或 -p（set -e 无输出）；export 仅裸词或 -p（export FOO=1 无输出）。
+function isDumpCommand(command) {
+  const segments = command.split(/\||&&|\|\||;/).map((s) => s.trim()).filter(Boolean);
+  for (const seg of segments) {
+    let rest = seg;
+    let m;
+    while ((m = rest.match(/^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s]*)\s+/))) rest = rest.slice(m[0].length);
+    const first = rest.match(/^([^\s]+)/);
+    if (!first) continue;
+    const word = first[1];
+    if (word === "env" || word === "printenv") return true;
+    if (word === "set") {
+      const args = rest.slice(3).trim();
+      if (args === "" || args.startsWith("-p")) return true;
+    }
+    if (word === "export") {
+      const args = rest.slice(6).trim();
+      if (args === "" || args === "-p") return true;
+    }
+  }
+  return false;
 }
-function saveSessionState(sessionId, names) {
-  if (!sessionId) return;
-  try {
-    mkdirSync(STATE_DIR, { recursive: true });
-    writeFileSync(join(STATE_DIR, `${sessionId}.json`), JSON.stringify({ names, at: Date.now() }));
-    chmodSync(join(STATE_DIR, `${sessionId}.json`), 0o600);
-  } catch {}
-}
-const DUMP_RE = /(^|[\s;&|])(env|printenv|set|export)(\s|$|[\s;&|])/;
 
 // ---------- env 文件与清理 ----------
 function cleanStale() {
@@ -175,20 +187,26 @@ if (config.size === 0) { allow(); } // 未配置 = 纯旁路
 cleanStale();
 
 const sessionId = payload?.session_id ?? "";
-const state = loadSessionState(sessionId);
-
-// dump 黑名单先于引用扫描：env/printenv/set/export 本身不含密钥引用，若放在 tokens 判断之后会被提前放行
-if (state?.names?.length && DUMP_RE.test(command)) {
-  deny(`secret-env：本会话已注入密钥（${state.names.join("、")}），拒绝执行 env/printenv/set/export 类命令以防值倾泻。如确需查看环境，请在无密钥上下文操作。`);
-}
 
 const tokens = scanRefs(command, config);
-if (tokens.length === 0) { allow(); }
+if (tokens.length === 0) {
+  // 无引用命令：唯一缺口是围绕注入变量名（ZCODE_SECRET_*）的探测/过滤（set | grep ZCODE 等），
+  // 裸 env 打不到它们（未导出到本 shell）。探针放宽到 zcode 词根。
+  if (isDumpCommand(command) && /zcode/i.test(command)) {
+    deny(`secret-env：拒绝围绕注入变量（ZCODE_SECRET_*）的探测。命令里写密钥引用（如 "$GH_TOKEN"）即可。`);
+  }
+  allow();
+}
 
 // 单引号内引用 → 拒绝改写（不生效的引用比失败更危险）
 const bad = tokens.filter((t) => t.inSingle);
 if (bad.length) {
   deny(`secret-env：引用位于单引号内不会被展开（${[...new Set(bad.map((t) => t.token))].join("、")}）。请改用双引号包裹，例如 "$GH_TOKEN"。`);
+}
+
+// 同命令倾泻拦截：命令含密钥引用且命令位置有倾泻意图（如 GH_TOKEN=$GH_TOKEN env）
+if (isDumpCommand(command)) {
+  deny(`secret-env：命令同时含密钥引用与环境倾泻命令（env/printenv/set/export），会打印注入值。请把倾泻意图从命令中移除。`);
 }
 
 // 解析真值（canonical 去重）
@@ -221,9 +239,8 @@ for (const t of sorted) {
   rewritten = rewritten.slice(0, t.start) + `\${${varName}}` + rewritten.slice(t.start + t.token.length);
 }
 
-// 前缀 source env 文件；会话状态记账（名字，不含值）
+// 前缀 source env 文件
 const newCommand = `. ${shellSingleQuote(envFile)}; ${rewritten}`;
-saveSessionState(sessionId, [...new Set([...(state?.names ?? []), ...canonicalNames])]);
 log(`inject session=${sessionId} names=${canonicalNames.join(",")} file=${envFile}`);
 
 allow({ ...payload.tool_input, command: newCommand });
