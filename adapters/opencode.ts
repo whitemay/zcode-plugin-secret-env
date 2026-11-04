@@ -50,7 +50,7 @@ export const SecretEnvPlugin: Plugin = async () => {
       for (const name of [...new Set(tokens.map((t) => t.name))]) {
         const info = config.get(name)!;
         try {
-          values.set(name, await core.resolveValue(info.uri));
+          values.set(name, await core.resolveValue(info.uri, config));
         } catch (e) {
           deny(`解析 ${name}（${info.uri}）失败：${(e as Error).message}`);
         }

@@ -229,7 +229,7 @@ async function cmdHookZcode() {
   for (const name of canonicalNames) {
     const info = config.get(name);
     try {
-      values.set(name, await resolveValue(info.uri));
+      values.set(name, await resolveValue(info.uri, config));
     } catch (e) {
       deny(`secret-env：解析 ${name}（${info.uri}）失败：${e.message}`);
     }

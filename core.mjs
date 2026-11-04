@@ -107,7 +107,7 @@ export function systemBackend() {
   throw new Error(`未知平台：${platform}，无 system provider。`);
 }
 
-export async function resolveValue(uri) {
+export async function resolveValue(uri, config = null) {
   const scheme = uri.split("://")[0];
   const rest = uri.slice(scheme.length + 3);
   if (scheme === "keychain") {
@@ -133,7 +133,16 @@ export async function resolveValue(uri) {
   }
   if (scheme === "bitwarden") {
     // bitwarden://<item> → bw get password
-    const r = runBin("bw", ["get", "password", rest]);
+    // bw 需要解锁态：若配置里存在 BW_SESSION 记录（如 keychain://bw-session），先解析并注入子进程环境；
+    // 无此记录则依赖宿主环境已带 BW_SESSION。session key 本身不允许 bitwarden://（自举死循环）。
+    let opts = {};
+    const sess = config?.get("BW_SESSION");
+    if (sess) {
+      if (sess.uri.startsWith("bitwarden://"))
+        throw new Error("BW_SESSION 记录的 uri 不能是 bitwarden://（需要 vault 先解锁才能解锁，死循环）");
+      opts = { env: { ...process.env, BW_SESSION: await resolveValue(sess.uri, config) } };
+    }
+    const r = runBin("bw", ["get", "password", rest], opts);
     const out = r.ok ? r.stdout.trim() : "";
     if (!out) throw new Error(`bw 未取到 ${rest}（exit=${r.exitCode} err=${r.stderr}）`);
     return out;
