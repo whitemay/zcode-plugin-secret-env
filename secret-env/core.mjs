@@ -21,7 +21,7 @@ export function loadConfig() {
       const raw = JSON.parse(readFileSync(path, "utf8"));
       for (const [name, def] of Object.entries(raw)) {
         if (map.has(name)) continue;
-        map.set(name, { canonical: name, uri: def.uri });
+        map.set(name, { canonical: name, uri: def.uri, description: def.description });
         for (const a of def.aliases ?? []) if (!map.has(a)) map.set(a, { canonical: name, uri: def.uri });
       }
     } catch {}

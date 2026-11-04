@@ -6,17 +6,21 @@ import { loadConfig } from "../core.mjs";
 const config = loadConfig();
 if (config.size === 0) process.exit(0);
 
-// 按主键聚合：名字 → {aliases}
+// 按主键聚合：名字 → {aliases, description}。URL 不注入——它与消费无关且可能暴露存储拓扑。
 const entries = new Map();
 for (const [name, info] of config) {
-  if (info.canonical === name) entries.set(name, []);
-  else entries.get(info.canonical)?.push(name);
+  if (info.canonical === name) entries.set(name, { aliases: [], description: info.description });
+  else entries.get(info.canonical)?.aliases.push(name);
 }
 
 const lines = [
   "已配置密钥（secret-env，值永不出现在上下文，命令中显式引用即可注入子进程环境）：",
-  ...[...entries].map(([name, aliases]) =>
-    `- ${name}${aliases.length ? `（别名：${aliases.join("、")}）` : ""}`),
+  ...[...entries].map(([name, { aliases, description }]) => {
+    let line = `- ${name}`;
+    if (aliases.length) line += `（别名：${aliases.join("、")}）`;
+    if (description) line += `：${description}`;
+    return line;
+  }),
   "用法：命令文本写 $NAME 或 ${NAME}（双引号内），隐式读取的工具写成 NAME=$NAME cmd；禁止单引号包引用、禁止命令含 env/printenv/裸 set/export。",
   "详见 secret-env skill。",
 ];
