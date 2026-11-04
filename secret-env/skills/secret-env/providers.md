@@ -2,12 +2,25 @@
 
 各 provider 的准备工作与添加凭据条目的步骤。配置登记统一在 `~/.config/secret-env/secrets.json`（周知名 → {uri, aliases?, description?}，文件里只有名字和 uri，无真值）。推荐用 `secret-env add` 交互登记（值经隐藏输入，不经过 Agent 上下文）。
 
+## URI 一般化寻址（2026-11-04 定案）
+
+所有 provider 统一 `scheme://item[/field]`：
+
+- **一级寻址（缺省）= 主密钥**：keychain → password；bitwarden → password；viking → 条目主值
+- **二级寻址 = 次级字段**：
+  - `keychain://<service>/account` — keychain account 属性（同 service 多 account 条目存在时报歧义错，不静默取第一条）
+  - `viking://<category>/<target>/<field>` — privacy 条目字段（既有能力）
+  - `bitwarden://<item>/username`、`/totp`、`/password` — 保留键，走 bw get 子命令；其余字段名按自定义字段在条目 `fields[]` 里按 name 匹配（保留键优先，撞名改字段名消歧）
+- 字段段 URI 内不允许 `/` 与空格；bw 字段名含空格时建议改用无空格命名
+- 账户信息（username/account/成对凭证的 id 侧）是 agent 真实需求（构造 DSN/`-u` 参数/成对 API 凭证），次级寻址为此而设
+
 ## keychain://（macOS 系统密钥库，本机最简）
 
 准备：无需安装，macOS 自带 `security` 命令。
 
 ```bash
 secret-env add -n "github token" --provider system            # 隐藏输入收值，自动登记
+secret-env add -n "aws creds" --provider system --user "AKIA..."  # 可选：account 属性存指定值（缺省 = 当前系统用户）
 # 等价裸命令：security add-generic-password -U -s <service> -a "$USER" -w
 ```
 
@@ -53,9 +66,9 @@ secret-env add -n myvar --provider bitwarden --item "条目名"
 
 要点：
 
-- 只取 **login 条目的 password 字段**（username/notes/自定义字段取不到）
+- 一级寻址取 login 条目的 password 字段；`/username` `/totp` 及任意自定义字段名可二级寻址（见「URI 一般化寻址」）
 - 条目名需唯一；重名条目用 id（`bw get item <名> | jq -r .id` 查，界面里 Web Vault 地址栏 `itemId=` 可见）
-- 名字含空格/中文无需转义
+- 名字含空格/中文无需转义（字段名含空格不建议用于 URI）
 - **session key 生命周期**：每次 `bw unlock` 换新值 → 重跑上面的 `security add-generic-password` 覆盖；过期后 bitwarden 凭据解析报 bw 原始错误（locked/not unlocked 字样即此因）
 
 ## 验证

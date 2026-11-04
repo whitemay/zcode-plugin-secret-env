@@ -39,9 +39,20 @@ AI 会话中执行需要凭据的 Bash 命令时，凭据不能经过模型上�
 |---|---|---|
 | `keychain://` | 系统密钥库（macOS `security` 命令） | 本机最简 |
 | `viking://` | OpenViking privacy 层（`ov privacy resolve <category> <target>[/<field>]`，v0.5.1 CLI 实测在） | 跨设备 |
-| `bitwarden://` | Bitwarden CLI（`bw get password`） | 跨设备、团队共享 |
+| `bitwarden://` | Bitwarden CLI（`bw get`） | 跨设备、团队共享 |
 
 > scheme 命名拍板（2026-11-04）：OpenViking provider 直接用真实 scheme 标识 `viking://`，不自造 `ov://`。注意 privacy 条目按 category/target/field 三段寻址，并非 viking:// 资源树 URI，只是复用同一 scheme 字面。
+
+### URI 一般化寻址（2026-11-04）
+
+需求先行：账户信息也是 agent 常用载荷（构造 DSN、`-u` 参数、成对凭证的 id 侧如 AWS access key id），不止密钥本身。由此把 URI 从「`scheme://item` = 主密钥」推广为 `scheme://item[/field]`：
+
+- **一级寻址（缺省）= 主密钥**，已登记 URI 全部不变，零迁移
+- **二级寻址**：`keychain://<service>/account`（读属性表解析 `"acct"=` 行）；`viking://…/<field>`（既有能力，天然符合）；`bitwarden://<item>/<field>`——保留键 `password`/`username`/`totp` 走 `bw get` 子命令，其余按自定义字段在 `fields[]` 按 name 匹配（保留键优先，撞名改字段名消歧）
+- keychain 写入侧配套：`secret-env add --user <acct>` 可选参数（account 非敏感，缺省仍为当前系统用户）；读侧对 `keychain://<svc>/account` 有实义的前提是 account 有被认真写入
+- **防歧义**（探针实证）：macOS keychain 的 account 与 service 共同构成条目身份，`-U` 带新 account 不改旧条目而是新建第二条；`find-generic-password -s` 在多命中时只静默返回第一条——读前经 `dump-keychain` 计数（~20ms），>1 即报歧义错，password 与 account 两条路径统一拒绝
+- 探针验证：bw 自定义字段（text/hidden、中文与带空格字段名）均可在 `fields[].value` 取到；`bw get item` 的 JSON 解析天然保留前导空格等值形态
+
 
 ### bitwarden:// 的两级解析（2026-11-04，0.1.1）
 
