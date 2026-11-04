@@ -126,6 +126,72 @@ export function systemBackend() {
   throw new Error(`未知平台：${platform}，无 system provider。`);
 }
 
+// ---------- 写侧：provider 自治写入（配置即能力，DESIGN §3） ----------
+// 写与读同构：provider 依赖的凭据一律经 resolveValue 链式解析（跨 provider 互调），
+// 不关心第一级落在哪个 scheme——BW_SESSION 自举即此规则的既有实例。
+// bw create/edit 的 encodedJson = base64(JSON)（等价 `| bw encode`），值经 stdin 不落 argv
+const encodeBwJson = (obj) => Buffer.from(JSON.stringify(obj)).toString("base64");
+
+async function bwSessionOpts(config) {
+  const sess = config?.get("BW_SESSION");
+  if (!sess) return {};
+  if (sess.uri.startsWith("bitwarden://"))
+    throw new Error("BW_SESSION 记录的 uri 不能是 bitwarden://（需要 vault 先解锁才能解锁，死循环）");
+  return { env: { ...process.env, BW_SESSION: await resolveValue(sess.uri, config) } };
+}
+
+// spec: {provider:"system", service, user?} | {provider:"bitwarden", item, field?, user?}
+//     | {provider:"viking", parts:[category, target, field?]}. value 为明文，只经 stdin/临时文件。
+export async function writeValue(spec, value, config = null) {
+  if (spec.provider === "system") {
+    const backend = systemBackend();
+    await backend.write(spec.service, value, spec.user);
+    return;
+  }
+  if (spec.provider === "bitwarden") {
+    const opts = await bwSessionOpts(config);
+    if (spec.field) {
+      // 二级写 = 已存在条目上 upsert 自定义字段（不隐式建条目）
+      const r = runBin("bw", ["get", "item", spec.item, "--raw"], opts);
+      if (!r.ok) throw new Error(`条目 ${spec.item} 不存在或不可读（${r.stderr}）——--field 不隐式建条目，请先在 vault 建条目或去掉 --field`);
+      const item = JSON.parse(r.stdout);
+      const fields = (item.fields ?? []).filter((f) => f.name !== spec.field);
+      fields.push({ name: spec.field, value, type: 1 });
+      const out = runBin("bw", ["edit", "item", item.id], { ...opts, input: encodeBwJson({ ...item, fields }) });
+      if (!out.ok) throw new Error(`bw edit 失败（exit=${out.exitCode} err=${out.stderr}）`);
+      return;
+    }
+    // 一级写 = password 位：条目存在则改，不存在则新建 login 条目（--user 顺路写 username 位）
+    const r = runBin("bw", ["get", "item", spec.item, "--raw"], opts);
+    if (r.ok) {
+      const item = JSON.parse(r.stdout);
+      const merged = { ...item, login: { ...item.login, password: value, ...(spec.user ? { username: spec.user } : {}) } };
+      const out = runBin("bw", ["edit", "item", item.id], { ...opts, input: encodeBwJson(merged) });
+      if (!out.ok) throw new Error(`bw edit 失败（exit=${out.exitCode} err=${out.stderr}）`);
+    } else {
+      const obj = { type: 1, name: spec.item, notes: null, favorite: false, reprompt: 0, fields: [], login: { username: spec.user ?? null, password: value, totp: null } };
+      const out = runBin("bw", ["create", "item"], { ...opts, input: encodeBwJson(obj) });
+      if (!out.ok) throw new Error(`bw create 失败（exit=${out.exitCode} err=${out.stderr}）`);
+    }
+    return;
+  }
+  if (spec.provider === "viking") {
+    // 值经 0600 临时文件（--values-file），不落 argv；path 无 field 段时主值写进 value 字段
+    const [cat, target, field] = spec.parts;
+    if (spec.parts.length < 2) throw new Error(`viking 写入需 <category>/<target>[/<field>]`);
+    const tmp = join(tmpdir(), `secret-env-upsert-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+    writeFileSync(tmp, JSON.stringify({ [field ?? "value"]: value }), { mode: 0o600 });
+    try {
+      const r = runBin("ov", ["privacy", "upsert", cat, target, "--values-file", tmp]);
+      if (!r.ok) throw new Error(`ov privacy upsert 失败（exit=${r.exitCode} err=${r.stderr}）`);
+    } finally {
+      unlinkSync(tmp);
+    }
+    return;
+  }
+  throw new Error(`未知写入 provider：${spec.provider}`);
+}
+
 // bitwarden item JSON → 自定义字段值（保留键分流在 resolveValue，不进这里）
 export function pickBwField(item, field) {
   const f = (item?.fields ?? []).find((x) => x.name === field);
@@ -168,13 +234,7 @@ export async function resolveValue(uri, config = null) {
     // 二级保留键 password/username/totp 走 bw get 现成子命令，其余按自定义字段在 fields[] 里按 name 匹配。
     // bw 需要解锁态：若配置里存在 BW_SESSION 记录（如 keychain://bw-session），先解析并注入子进程环境；
     // 无此记录则依赖宿主环境已带 BW_SESSION。session key 本身不允许 bitwarden://（自举死循环）。
-    let opts = {};
-    const sess = config?.get("BW_SESSION");
-    if (sess) {
-      if (sess.uri.startsWith("bitwarden://"))
-        throw new Error("BW_SESSION 记录的 uri 不能是 bitwarden://（需要 vault 先解锁才能解锁，死循环）");
-      opts = { env: { ...process.env, BW_SESSION: await resolveValue(sess.uri, config) } };
-    }
+    const opts = await bwSessionOpts(config);
     const parts = rest.split("/");
     if (parts.length > 2) throw new Error(`bitwarden:// URI 需为 <item>[/<field>]：${uri}`);
     const [item, field] = parts;

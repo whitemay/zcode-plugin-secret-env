@@ -7,7 +7,7 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { argv } from "bun";
-import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeEnvFile, shellSingleQuote, systemBackend } from "./core.mjs";
+import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeValue, writeEnvFile, shellSingleQuote, systemBackend } from "./core.mjs";
 
 const LOG = "/tmp/zcode-secret-env.log";
 const CONFIG_PATH = join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json");
@@ -16,13 +16,14 @@ function log(msg) {
   try { appendFileSync(LOG, `[${new Date().toISOString()}] ${msg}\n`); } catch {}
 }
 
-// ---------- add：交互入库 + 登记 ----------
+// ---------- add：收值 → provider 写入 → 登记（写侧自治，DESIGN §3） ----------
 // 用法：secret-env add -n <name> [TOKEN] [--alias A]... [--desc D]
 //        -n/--name 必选，人读名（如 "github token"）；位置参数只能是 token 本身（给了则不交互）
 //        env 变量名 = name 归一化全大写下划线（github token → GITHUB_TOKEN）
-//        --provider system   存 macOS 钥匙串，service 缺省 = secret-env-<小写连字符名>（已带前缀不重复加）
-//        --provider viking --path c/t[/f]     值已由用户在 OpenViking 放好，只登记映射
-//        --provider bitwarden --item I        同上，只登记映射
+//        --provider system    存本机钥匙串，service 缺省 = secret-env-<小写连字符名>；--user 可选（account 属性）
+//        --provider bitwarden --item I [--field F]   写 vault：无 field → password 位（条目不存在则新建 login 条目）；
+//                                                    有 field → 已存在条目上 upsert 自定义字段；--user 写 username 位
+//        --provider viking --path c/t[/f]            写 OpenViking privacy（值经 0600 临时文件，不落 argv）；无 f 时主值落 value 字段
 function envNameFromHuman(name) {
   // 驼峰拆词 → 按非字母数字切词 → 大写下划线
   const words = name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[^A-Za-z0-9]+/).filter(Boolean);
@@ -44,6 +45,7 @@ function parseAddArgs(args) {
     else if (a === "--service") opts.service = args[++i];
     else if (a === "--path") opts.path = args[++i];
     else if (a === "--item") opts.item = args[++i];
+    else if (a === "--field") opts.field = args[++i];
     else if (a === "--user") opts.user = args[++i];
     else if (!a.startsWith("-")) opts.token ??= a;
     else { console.error(`未知参数：${a}`); process.exit(2); }
@@ -72,7 +74,7 @@ function updateConfig(name, def) {
 async function cmdAdd(args) {
   const opts = parseAddArgs(args);
   if (!opts.name) {
-    console.error("用法：secret-env add -n <name> [TOKEN] [--alias A]... [--desc D] [--provider system|viking|bitwarden ...]\n  name 为人读名（如 github token），env 变量名自动归一化为全大写下划线；位置参数只能是 token 本身\n  system 与 keychain 等价（本机系统密钥库）；--user <acct> 可选，写 keychain account 属性（缺省 = 当前系统用户）\n  已存在条目不带 --provider 时进入维护模式（只改别名/描述），显式给 --provider system 则强制重新收值");
+    console.error("用法：secret-env add -n <name> [TOKEN] [--alias A]... [--desc D] [--provider system|viking|bitwarden ...]\n  统一流程：收值（隐藏输入或位置参数）→ provider 写入 → 登记 uri。写侧自治：bitwarden 走配置里的 BW_SESSION，viking 走本机 ov。\n  system：--service 可选（缺省自动命名），--user 可选（keychain account 属性，缺省 = 当前系统用户）\n  bitwarden：--item <条目名> 必选；--field <字段> 二级写入（条目须已存在）；--user 写 username 位\n  viking：--path <category>/<target>[/<field>]；无 field 时主值落 value 字段\n  已存在条目不带 --provider 时进入维护模式（只改别名/描述），显式给 --provider 则强制重新收值");
     process.exit(2);
   }
   const envName = envNameFromHuman(opts.name);
@@ -84,7 +86,7 @@ async function cmdAdd(args) {
   const existing = JSON.parse(readFileSync(CONFIG_PATH, "utf8"))[envName];
   if (!opts.provider && !existing) { console.error(`新条目需要 --provider（system|viking|bitwarden）`); process.exit(2); }
   // 收值需要真终端；Agent 的 Bash 无 TTY，值必须由用户亲手输入（给了位置参数 token 则免交互）
-  const needsPrompt = opts.provider === "system" && !opts.token;
+  const needsPrompt = opts.provider && !opts.token;
   if (needsPrompt && !process.stdin.isTTY) {
     console.error("收值需要交互终端（TTY）。请在你的终端里直接运行本命令（或把 token 作为位置参数传入），值不会经过 Agent。");
     process.exit(2);
@@ -106,15 +108,33 @@ async function cmdAdd(args) {
       process.exit(2);
     }
     uri = `keychain://${service}`;
-  } else if (opts.user && opts.provider !== "system") {
-    console.error("--user 仅支持 system provider（keychain account 属性）"); process.exit(2);
+  } else if (opts.provider === "bitwarden") {
+    if (!opts.item) { console.error("bitwarden 需要 --item <item>[，--field <字段> 二级写入]"); process.exit(2); }
+    if (opts.user && opts.field) { console.error("--user 与 --field 互斥（字段写入不带 username 位）"); process.exit(2); }
+    const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
+    try {
+      // 写侧自治：经配置里的 BW_SESSION 记录解析 session 后写入 vault
+      await writeValue({ provider: "bitwarden", item: opts.item, field: opts.field, user: opts.user }, value, loadConfig());
+    } catch (e) {
+      console.error(`入库失败：${e.message}`);
+      process.exit(2);
+    }
+    uri = `bitwarden://${opts.item}${opts.field ? `/${opts.field}` : ""}`;
   } else if (opts.provider === "viking") {
     if (!opts.path) { console.error("viking 需要 --path <category>/<target>[/<field>]"); process.exit(2); }
-    // 值由用户经 ov 自行放入 privacy 区域，这里只登记映射
-    uri = `viking://${opts.path}`;
-  } else if (opts.provider === "bitwarden") {
-    if (!opts.item) { console.error("bitwarden 需要 --item <item>"); process.exit(2); }
-    uri = `bitwarden://${opts.item}`;
+    const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
+    const parts = opts.path.split("/");
+    if (parts.length < 2 || parts.length > 3) { console.error("--path 需为 <category>/<target>[/<field>]"); process.exit(2); }
+    try {
+      // 写侧自治：值经 0600 临时文件走 ov privacy upsert（不落 argv）
+      await writeValue({ provider: "viking", parts: parts.length === 2 ? [...parts, "value"] : parts }, value);
+    } catch (e) {
+      console.error(`入库失败：${e.message}`);
+      process.exit(2);
+    }
+    uri = `viking://${parts.join("/")}`;
+  } else if (opts.user) {
+    console.error("--user 仅支持 system 与 bitwarden provider（keychain account / bw username 位）"); process.exit(2);
   } else {
     console.error(`未知 provider：${opts.provider}`); process.exit(2);
   }
