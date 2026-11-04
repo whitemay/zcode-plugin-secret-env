@@ -5,6 +5,7 @@ import { mkdirSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSy
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { execFileSync, spawnSync } from "node:child_process";
 
 export const ENV_DIR = join(tmpdir(), "secret-env-injections");
 export const STALE_MS = 15 * 60 * 1000;
@@ -30,12 +31,34 @@ export function loadConfig() {
 }
 
 // ---------- provider 抽象（scheme 路由） ----------
+// 运行时中立：全部走 node:child_process（Node 与 Bun 原生都支持）——
+// ZCode 钩子在 Bun 下跑，opencode/DSH 适配器可能在 Node/Electron 下跑，core 不得依赖 Bun 全局。
+const runBin = (cmd, args, opts = {}) => {
+  // execFileSync：非零退出抛错（携带 stderr），值不经过 shell
+  try {
+    return { ok: true, stdout: execFileSync(cmd, args, { encoding: "utf8", ...opts }).toString() };
+  } catch (e) {
+    return { ok: false, exitCode: e.status ?? -1, stderr: (e.stderr?.toString?.() ?? e.message).slice(0, 160) };
+  }
+};
+const whichBin = (cmd) => {
+  // 轻量 which：扫 PATH 找可执行文件（避免依赖 Bun.which / 独立 which 包）
+  for (const dir of (process.env.PATH ?? "").split(":")) {
+    if (!dir) continue;
+    try {
+      const p = join(dir, cmd);
+      if (statSync(p).isFile() && statSync(p).mode & 0o111) return p;
+    } catch {}
+  }
+  return null;
+};
+
 // system provider（uri scheme 沿用 keychain://）：按平台路由到本机密钥库。
 // 执行前先做平台判断 + 二进制探测，探测失败给出人话指引——不等运行失败。
 export function systemBackend() {
   const platform = process.platform;
   const requireBin = (cmd, hint) => {
-    if (!Bun.which(cmd)) throw new Error(`本机系统密钥库需要 ${cmd}，未找到。${hint}`);
+    if (!whichBin(cmd)) throw new Error(`本机系统密钥库需要 ${cmd}，未找到。${hint}`);
     return cmd;
   };
   if (platform === "darwin") {
@@ -43,17 +66,17 @@ export function systemBackend() {
     return {
       backend: "macos-keychain",
       read: async (service) => {
-        const r = await Bun.$`security find-generic-password -s ${service} -w`.quiet().nothrow();
-        if (r.exitCode !== 0) throw new Error(`security find-generic-password 未取到 ${service}（exit=${r.exitCode} err=${r.stderr.toString().slice(0, 120)}）`);
-        return r.stdout.toString().trim();
+        const r = runBin("security", ["find-generic-password", "-s", service, "-w"]);
+        if (!r.ok) throw new Error(`security find-generic-password 未取到 ${service}（exit=${r.exitCode} err=${r.stderr}）`);
+        return r.stdout.trim();
       },
       write: async (service, value) => {
-        const r = await Bun.$`security add-generic-password -a ${process.env.USER} -s ${service} -w ${value} -U`.quiet().nothrow();
-        if (r.exitCode !== 0) throw new Error(`security add-generic-password 失败（exit=${r.exitCode} err=${r.stderr.toString().slice(0, 120)}）`);
+        const r = runBin("security", ["add-generic-password", "-a", process.env.USER, "-s", service, "-w", value, "-U"]);
+        if (!r.ok) throw new Error(`security add-generic-password 失败（exit=${r.exitCode} err=${r.stderr}）`);
       },
       remove: async (service) => {
-        const r = await Bun.$`security delete-generic-password -s ${service}`.quiet().nothrow();
-        return r.exitCode === 0;
+        const r = runBin("security", ["delete-generic-password", "-s", service]);
+        return r.ok;
       },
     };
   }
@@ -62,22 +85,19 @@ export function systemBackend() {
     return {
       backend: "linux-secret-service",
       read: async (service) => {
-        const r = await Bun.$`secret-tool lookup service ${service}`.quiet().nothrow();
-        const out = r.stdout.toString().trim();
-        if (r.exitCode !== 0 || !out) throw new Error(`secret-tool lookup 未取到 ${service}（exit=${r.exitCode}）——确认 keyring daemon 已解锁`);
+        const r = runBin("secret-tool", ["lookup", "service", service]);
+        const out = r.ok ? r.stdout.trim() : "";
+        if (!out) throw new Error(`secret-tool lookup 未取到 ${service}（exit=${r.exitCode}）——确认 keyring daemon 已解锁`);
         return out;
       },
       write: async (service, value) => {
         // 值经 stdin 传递，不落 argv
-        const proc = Bun.spawn(["secret-tool", "store", "--label", service, "service", service], { stdin: "pipe" });
-        proc.stdin.write(value);
-        proc.stdin.end();
-        const code = await proc.exited;
-        if (code !== 0) throw new Error(`secret-tool store 失败（exit=${code}）`);
+        const r = spawnSync("secret-tool", ["store", "--label", service, "service", service], { input: value, encoding: "utf8" });
+        if (r.status !== 0) throw new Error(`secret-tool store 失败（exit=${r.status}）`);
       },
       remove: async (service) => {
-        const r = await Bun.$`secret-tool clear service ${service}`.quiet().nothrow();
-        return r.exitCode === 0;
+        const r = runBin("secret-tool", ["clear", "service", service]);
+        return r.ok;
       },
     };
   }
@@ -102,10 +122,9 @@ export async function resolveValue(uri) {
     // resolve 输出是多行元数据表，真值在 value 行：`value<空白>真值`；只截该行，绝不整表返回
     const parts = rest.split("/");
     if (parts.length < 2) throw new Error(`viking:// URI 需为 <category>/<target>[/<field>]：${uri}`);
-    const args = ["privacy", "resolve", ...parts];
-    const r = await Bun.$`ov ${args}`.quiet().nothrow();
-    const out = r.stdout.toString();
-    if (r.exitCode !== 0 || !out.trim()) throw new Error(`ov privacy resolve 未取到 ${rest}（exit=${r.exitCode} err=${r.stderr.toString().slice(0, 120)}）`);
+    const r = runBin("ov", ["privacy", "resolve", ...parts]);
+    const out = r.ok ? r.stdout : "";
+    if (!out.trim()) throw new Error(`ov privacy resolve 未取到 ${rest}（exit=${r.exitCode} err=${r.stderr}）`);
     const valueLine = out.split("\n").find((l) => l.startsWith("value"));
     if (!valueLine) throw new Error(`ov privacy resolve 输出无 value 行（${rest}），输出形状疑似变更`);
     const value = valueLine.slice("value".length).trim();
@@ -114,9 +133,9 @@ export async function resolveValue(uri) {
   }
   if (scheme === "bitwarden") {
     // bitwarden://<item> → bw get password
-    const r = await Bun.$`bw get password ${rest}`.quiet().nothrow();
-    const out = r.stdout.toString().trim();
-    if (r.exitCode !== 0 || !out) throw new Error(`bw 未取到 ${rest}（exit=${r.exitCode} err=${r.stderr.toString().slice(0, 120)}）`);
+    const r = runBin("bw", ["get", "password", rest]);
+    const out = r.ok ? r.stdout.trim() : "";
+    if (!out) throw new Error(`bw 未取到 ${rest}（exit=${r.exitCode} err=${r.stderr}）`);
     return out;
   }
   throw new Error(`未知 provider scheme：${scheme}://`);
