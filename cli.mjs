@@ -6,7 +6,7 @@
 // 真值只在：用户终端输入 → provider 存储 → 子进程环境。任何环节不进模型上下文。
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { argv, exit } from "bun";
+import { argv } from "bun";
 import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeEnvFile, shellSingleQuote } from "./core.mjs";
 
 const LOG = "/tmp/zcode-secret-env.log";
@@ -22,7 +22,7 @@ function log(msg) {
 //        --provider viking --path c/t[/f]     值已由用户在 OpenViking 放好，只登记映射
 //        --provider bitwarden --item I        同上，只登记映射
 function parseAddArgs(args) {
-  const opts = { aliases: [], provider: "keychain" };
+  const opts = { aliases: [], provider: null };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--alias") opts.aliases.push(args[++i]);
@@ -32,7 +32,7 @@ function parseAddArgs(args) {
     else if (a === "--path") opts.path = args[++i];
     else if (a === "--item") opts.item = args[++i];
     else if (!a.startsWith("--")) opts.name ??= a;
-    else { console.error(`未知参数：${a}`); exit(2); }
+    else { console.error(`未知参数：${a}`); process.exit(2); }
   }
   return opts;
 }
@@ -41,7 +41,7 @@ async function promptHiddenValue(label) {
   // 用户终端隐藏输入：read -rs 在 bash 子进程里关掉回显，值经 stdout 回到本进程内存
   const r = Bun.spawnSync(["bash", "-c", `read -rs -p ${JSON.stringify(label)} v && echo "$v"`], { stdin: "inherit", stdout: "pipe" });
   const v = r.stdout.toString().replace(/\n$/, "");
-  if (!v) { console.error("\n空值，放弃。"); exit(2); }
+  if (!v) { console.error("\n空值，放弃。"); process.exit(2); }
   console.log("");
   return v;
 }
@@ -57,31 +57,67 @@ function updateConfig(name, def) {
 
 async function cmdAdd(args) {
   const opts = parseAddArgs(args);
-  if (!opts.name) { console.error("用法：secret-env add <NAME> [--alias A]... [--desc D] --provider keychain|viking|bitwarden [--service S|--path P|--item I]"); exit(2); }
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(opts.name)) { console.error(`名字不合环境变量名规范：${opts.name}`); exit(2); }
+  if (!opts.name) { console.error("用法：secret-env add <NAME> [--alias A]... [--desc D] [--provider keychain|viking|bitwarden ...]\n  已存在条目不带 --provider 时进入维护模式：只更新别名/描述，不动已存的值"); process.exit(2); }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(opts.name)) { console.error(`名字不合环境变量名规范：${opts.name}`); process.exit(2); }
+
+  const existing = JSON.parse(readFileSync(CONFIG_PATH, "utf8"))[opts.name];
+  if (!opts.provider && !existing) { console.error(`新条目需要 --provider（keychain|viking|bitwarden）`); process.exit(2); }
+  // 收值需要真终端；Agent 的 Bash 无 TTY，值必须由用户亲手输入
+  if (opts.provider === "keychain" && !process.stdin.isTTY) {
+    console.error("add 的收值需要交互终端（TTY）。请在你的终端里直接运行本命令，值不会经过 Agent。");
+    process.exit(2);
+  }
 
   let uri;
-  if (opts.provider === "keychain") {
+  if (!opts.provider && existing) {
+    // 维护模式：保留 uri 与已存的值，只改别名/描述
+    uri = existing.uri;
+    console.log(`维护模式：${opts.name} 已存在（${uri}），值不动。`);
+  } else if (opts.provider === "keychain") {
     const service = opts.service ?? `secret-env-${opts.name.toLowerCase()}`;
     const value = await promptHiddenValue(`输入 ${opts.name} 的值（隐藏输入，回车确认）: `);
     const r = await Bun.$`security add-generic-password -a ${process.env.USER} -s ${service} -w ${value} -U`.nothrow();
-    if (r.exitCode !== 0) { console.error(`钥匙串写入失败（exit=${r.exitCode}）：${r.stderr.toString().trim()}`); exit(2); }
+    if (r.exitCode !== 0) { console.error(`钥匙串写入失败（exit=${r.exitCode}）：${r.stderr.toString().trim()}`); process.exit(2); }
     uri = `keychain://${service}`;
   } else if (opts.provider === "viking") {
-    if (!opts.path) { console.error("viking 需要 --path <category>/<target>[/<field>]"); exit(2); }
+    if (!opts.path) { console.error("viking 需要 --path <category>/<target>[/<field>]"); process.exit(2); }
     // 值由用户经 ov 自行放入 privacy 区域，这里只登记映射
     uri = `viking://${opts.path}`;
   } else if (opts.provider === "bitwarden") {
-    if (!opts.item) { console.error("bitwarden 需要 --item <item>"); exit(2); }
+    if (!opts.item) { console.error("bitwarden 需要 --item <item>"); process.exit(2); }
     uri = `bitwarden://${opts.item}`;
   } else {
-    console.error(`未知 provider：${opts.provider}`); exit(2);
+    console.error(`未知 provider：${opts.provider}`); process.exit(2);
   }
 
   const raw = updateConfig(opts.name, { uri, ...(opts.aliases.length ? { aliases: opts.aliases } : {}), ...(opts.description ? { description: opts.description } : {}) });
   console.log(`已登记 ${opts.name} → ${uri}`);
   console.log(`secrets.json 现有条目：${Object.keys(raw).join("、")}`);
   console.log("下个 session 的清单注入将自动包含新条目。");
+}
+
+async function cmdRemove(args) {
+  const name = args.filter((a) => !a.startsWith("--"))[0];
+  const purge = args.includes("--purge");
+  if (!name || args.some((a) => a.startsWith("--") && a !== "--purge")) {
+    console.error("用法：secret-env remove <NAME> [--purge]   (--purge 连 provider 里的值一起删，目前支持 keychain)");
+    process.exit(2);
+  }
+  const raw = (() => { try { return JSON.parse(readFileSync(CONFIG_PATH, "utf8")); } catch { return {}; } })();
+  const def = raw[name];
+  if (!def) { console.error(`未配置：${name}（现有：${Object.keys(raw).join("、") || "无"}）`); process.exit(2); }
+
+  if (purge && def.uri.startsWith("keychain://")) {
+    const service = def.uri.slice("keychain://".length);
+    const r = await Bun.$`security delete-generic-password -s ${service}`.nothrow();
+    console.log(r.exitCode === 0 ? `钥匙串条目已删除（service=${service}）` : `钥匙串删除未命中（service=${service}，exit=${r.exitCode}）——可能已不存在，继续`);
+  } else if (purge) {
+    console.log(`${def.uri} 的 --purge 暂未支持（keychain 以外请用各自工具清理），只删映射。`);
+  }
+
+  delete raw[name];
+  writeFileSync(CONFIG_PATH, JSON.stringify(raw, null, 2) + "\n", { mode: 0o600 });
+  console.log(`映射已删除：${name}。下个 session 的清单注入自动更新。`);
 }
 
 function cmdList() {
@@ -184,10 +220,11 @@ async function cmdHookZcode() {
 // ---------- 入口 ----------
 const [cmd, ...rest] = argv.slice(2);
 if (cmd === "add") await cmdAdd(rest);
+else if (cmd === "remove") await cmdRemove(rest);
 else if (cmd === "list" && rest[0] === "--inject") cmdInjectList();
 else if (cmd === "list") cmdList();
 else if (cmd === "hook" && rest[0] === "zcode") await cmdHookZcode();
 else {
-  console.error("用法：secret-env add|list|hook zcode");
-  exit(cmd ? 2 : 0);
+  console.error("用法：secret-env add|remove|list [--inject]|hook zcode");
+  process.exit(cmd ? 2 : 0);
 }
