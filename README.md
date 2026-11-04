@@ -4,6 +4,10 @@ ZCode plugin: **secrets travel straight from your private vault into the Bash su
 
 [简体中文](./README.zh-CN.md) | English
 
+## Origin
+
+OpenViking's privacy area is the ideal home for secrets — but when consuming them via the `{{ov_privacy:...}}` placeholder, the MCP side (`privacy_resolve`) resolves the plaintext and it **inevitably flows back into the model context and session records**. However strict the storage side is, that consumption step hands the value to the model. This plugin exists to close that gap: secrets travel from the privacy area straight into the Bash subprocess environment, with the resolution chain completely bypassing the model context.
+
 ## How it works
 
 A PreToolUse(Bash) hook scans the command text for **explicit references** (a `{{secret:NAME}}` placeholder or a configured well-known `$VAR`), resolves the true value via a provider into a 0600 temp env file (exported under the name actually referenced in the command, i.e. the well-known original name), and lets the command through with only a source prefix: `. <envfile>; <original command>`. The command text is never rewritten; for implicit env consumers the skill guides the agent to make the reference explicit. Text and value are separated — the audit log only ever sees the env file path.
