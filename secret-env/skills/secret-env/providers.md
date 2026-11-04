@@ -19,9 +19,8 @@
 准备：无需安装，macOS 自带 `security` 命令。
 
 ```bash
-secret-env add -n "github token" --provider system            # 隐藏输入收值，自动登记
+secret-env add -n "github token" --provider system            # 隐藏输入收值 → 钥匙串 → 登记
 secret-env add -n "aws creds" --provider system --user "AKIA..."  # 可选：account 属性存指定值（缺省 = 当前系统用户）
-# 等价裸命令：security add-generic-password -U -s <service> -a "$USER" -w
 ```
 
 更新值：同命令重跑覆盖（`--provider system` 对已存在条目强制重新收值；不带则进维护模式只改别名/描述）。
@@ -30,14 +29,14 @@ secret-env add -n "aws creds" --provider system --user "AKIA..."  # 可选：acc
 
 准备：`ov` CLI 已配置（`~/.openviking/ovcli.conf`）且服务可达。
 
-值由用户自行放入 privacy 区域（不经对话），secret-env 只登记映射：
+写侧自治：`add` 收值后经 `ov privacy upsert` 写入（值走 0600 临时文件，不落 argv），再登记映射：
 
 ```bash
-ov privacy upsert credential openai --field-api_key sk-...   # 用户自行存值（值勿经对话）
-secret-env add -n openai --provider viking --path credential/openai/api_key
+secret-env add -n openai --provider viking --path credential/openai/api_key   # 收值 → 写 privacy 字段 → 登记
+secret-env add -n openai --provider viking --path credential/openai           # 无 field 段：主值落 value 字段
 ```
 
-更新值：在 ov 侧更新 privacy 条目即可，secrets.json 不动。
+更新值：同命令重跑覆盖，或直接在 ov 侧更新（secrets.json 不动）。
 
 ## bitwarden://（Bitwarden CLI，跨设备/团队共享）
 
@@ -56,20 +55,22 @@ security add-generic-password -U -s bw-session -a "$USER" -w
 # 交互提示时粘贴 unlock 输出里引号内的 session key（不带引号）
 ```
 
-secrets.json 中登记 `"BW_SESSION": { "uri": "keychain://bw-session" }`（有本条时，解析任何 bitwarden:// 凭据会自动取它注入 bw 子进程环境；其 uri 不可为 bitwarden://）。
+secrets.json 中登记 `"BW_SESSION": { "uri": "keychain://bw-session" }`（读写任何 bitwarden:// 条目时自动经配置链解析并注入 bw 子进程环境；其 uri 不可为 bitwarden://）。
 
-登记凭据：
+写侧自治：`add` 收值后经 bw 写入 vault（JSON 走 stdin，不落 argv），再登记映射：
 
 ```bash
-secret-env add -n myvar --provider bitwarden --item "条目名"
+secret-env add -n myvar --provider bitwarden --item "条目名"            # 收值 → password 位（条目不存在则新建 login 条目）
+secret-env add -n myvar.key --provider bitwarden --item "条目名" --field "api key"   # 收值 → 自定义字段（条目须已存在）
+secret-env add -n myvar --provider bitwarden --item "条目名" --user "someone"        # 顺路写 username 位
 ```
 
 要点：
 
-- 一级寻址取 login 条目的 password 字段；`/username` `/totp` 及任意自定义字段名可二级寻址（见「URI 一般化寻址」）
+- 写的落位与读镜像：password 位 ↔ 一级寻址；`--field`/username ↔ 二级寻址；`--field` 不隐式建条目
 - 条目名需唯一；重名条目用 id（`bw get item <名> | jq -r .id` 查，界面里 Web Vault 地址栏 `itemId=` 可见）
 - 名字含空格/中文无需转义（字段名含空格不建议用于 URI）
-- **session key 生命周期**：每次 `bw unlock` 换新值 → 重跑上面的 `security add-generic-password` 覆盖；过期后 bitwarden 凭据解析报 bw 原始错误（locked/not unlocked 字样即此因）
+- **session key 生命周期**：每次 `bw unlock` 换新值 → 重跑上面的 `security add-generic-password` 覆盖；过期后 bitwarden 凭据读写报 bw 原始错误（locked/not unlocked 字样即此因）
 
 ## 验证
 

@@ -60,10 +60,11 @@ AI 会话中执行需要凭据的 Bash 命令时，凭据不能经过模型上�
 
 推论与边界：
 
+- **跨 provider 互调（2026-11-04 补充拍板）**：读与写同构——provider 依赖的凭据一律经 `resolveValue` 链式解析，不关心第一级落在哪个 scheme。BW_SESSION 自举（keychain:// 喂 bw）即此规则的既有实例，实现收敛为 `bwSessionOpts(config)`，读写共用。
 - **读已自治**：resolveValue 统一注入 provider 凭据（BW_SESSION 配置记录优先于宿主环境变量）。
 - **写的落位与读镜像**：写 password 位 ↔ 读一级寻址；写自定义字段/username ↔ 读二级寻址。
-- **bitwarden 写语义**：`--item X`（不存在）→ 新建 login 条目，值进 password 位，`--user` 顺路写 username 位；`--item X --field F` → 已存在条目上 upsert 自定义字段（不存在则拒绝，不隐式建条目）。
-- **viking 写的安全约束**：`ov privacy upsert` 值走 argv 有进程表暴露面，先探针 stdin 通道；不支持则 viking 写侧保持「值由用户在 ov 侧放好」，缺位如实入档，不接受 argv 风险换自治。
+- **bitwarden 写语义**（已实现）：`--item X`（不存在）→ 新建 login 条目，值进 password 位，`--user` 顺路写 username 位；`--item X --field F` → 已存在条目上 upsert 自定义字段（不存在则拒绝，不隐式建条目）。bw create/edit 的 encodedJson = base64(JSON)，值经 stdin 不落 argv。
+- **viking 写**（已实现）：`ov privacy upsert` 值经 0600 临时文件走 `--values-file`（探针确认主值即条目唯一字段；argv 通道有进程表暴露面，弃用）；path 无 field 段时主值落 `value` 字段。
 - **keychain 写已闭环**（backend.write），作为统一形态的参照实现。
 
 ### bitwarden:// 的两级解析（2026-11-04，0.1.1）
