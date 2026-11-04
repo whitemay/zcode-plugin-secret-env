@@ -17,21 +17,34 @@ function log(msg) {
 }
 
 // ---------- add：交互入库 + 登记 ----------
-// 用法：secret-env add NAME [--alias A]... [--desc D]
-//        --provider keychain [--service S]   存 macOS 钥匙串（默认 service = secret-env-<NAME>）
+// 用法：secret-env add -n <name> [TOKEN] [--alias A]... [--desc D]
+//        -n/--name 必选，人读名（如 "github token"）；位置参数只能是 token 本身（给了则不交互）
+//        env 变量名 = name 归一化全大写下划线（github token → GITHUB_TOKEN）
+//        --provider system   存 macOS 钥匙串，service 缺省 = secret-env-<小写连字符名>（已带前缀不重复加）
 //        --provider viking --path c/t[/f]     值已由用户在 OpenViking 放好，只登记映射
 //        --provider bitwarden --item I        同上，只登记映射
+function envNameFromHuman(name) {
+  // 驼峰拆词 → 按非字母数字切词 → 大写下划线
+  const words = name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[^A-Za-z0-9]+/).filter(Boolean);
+  return words.join("_").toUpperCase();
+}
+function serviceFromHuman(name) {
+  const s = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return s.startsWith("secret-env-") ? s : `secret-env-${s}`;
+}
+
 function parseAddArgs(args) {
   const opts = { aliases: [], provider: null };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === "--alias") opts.aliases.push(args[++i]);
+    if (a === "-n" || a === "--name") opts.name = args[++i];
+    else if (a === "--alias") opts.aliases.push(args[++i]);
     else if (a === "--desc") opts.description = args[++i];
     else if (a === "--provider") opts.provider = args[++i];
     else if (a === "--service") opts.service = args[++i];
     else if (a === "--path") opts.path = args[++i];
     else if (a === "--item") opts.item = args[++i];
-    else if (!a.startsWith("--")) opts.name ??= a;
+    else if (!a.startsWith("-")) opts.token ??= a;
     else { console.error(`未知参数：${a}`); process.exit(2); }
   }
   return opts;
@@ -57,14 +70,22 @@ function updateConfig(name, def) {
 
 async function cmdAdd(args) {
   const opts = parseAddArgs(args);
-  if (!opts.name) { console.error("用法：secret-env add <NAME> [--alias A]... [--desc D] [--provider keychain|viking|bitwarden ...]\n  已存在条目不带 --provider 时进入维护模式：只更新别名/描述，不动已存的值"); process.exit(2); }
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(opts.name)) { console.error(`名字不合环境变量名规范：${opts.name}`); process.exit(2); }
+  if (!opts.name) {
+    console.error("用法：secret-env add -n <name> [TOKEN] [--alias A]... [--desc D] [--provider system|viking|bitwarden ...]\n  name 为人读名（如 github token），env 变量名自动归一化为全大写下划线；位置参数只能是 token 本身\n  system 与 keychain 等价（本机系统密钥库）；已存在条目不带 --provider 时进入维护模式（只改别名/描述），显式给 --provider system 则强制重新收值");
+    process.exit(2);
+  }
+  const envName = envNameFromHuman(opts.name);
+  if (!envName) { console.error(`name 归一化后为空：${opts.name}`); process.exit(2); }
+  // system 与 keychain 等价：都是本机系统密钥库；system 是显式别名——
+  // 条目已存在时用它绕过维护模式，强制重新收值入库
+  if (opts.provider === "keychain") opts.provider = "system";
 
-  const existing = JSON.parse(readFileSync(CONFIG_PATH, "utf8"))[opts.name];
-  if (!opts.provider && !existing) { console.error(`新条目需要 --provider（keychain|viking|bitwarden）`); process.exit(2); }
-  // 收值需要真终端；Agent 的 Bash 无 TTY，值必须由用户亲手输入
-  if (opts.provider === "keychain" && !process.stdin.isTTY) {
-    console.error("add 的收值需要交互终端（TTY）。请在你的终端里直接运行本命令，值不会经过 Agent。");
+  const existing = JSON.parse(readFileSync(CONFIG_PATH, "utf8"))[envName];
+  if (!opts.provider && !existing) { console.error(`新条目需要 --provider（system|viking|bitwarden）`); process.exit(2); }
+  // 收值需要真终端；Agent 的 Bash 无 TTY，值必须由用户亲手输入（给了位置参数 token 则免交互）
+  const needsPrompt = opts.provider === "system" && !opts.token;
+  if (needsPrompt && !process.stdin.isTTY) {
+    console.error("收值需要交互终端（TTY）。请在你的终端里直接运行本命令（或把 token 作为位置参数传入），值不会经过 Agent。");
     process.exit(2);
   }
 
@@ -72,10 +93,10 @@ async function cmdAdd(args) {
   if (!opts.provider && existing) {
     // 维护模式：保留 uri 与已存的值，只改别名/描述
     uri = existing.uri;
-    console.log(`维护模式：${opts.name} 已存在（${uri}），值不动。`);
-  } else if (opts.provider === "keychain") {
-    const service = opts.service ?? `secret-env-${opts.name.toLowerCase()}`;
-    const value = await promptHiddenValue(`输入 ${opts.name} 的值（隐藏输入，回车确认）: `);
+    console.log(`维护模式：${envName} 已存在（${uri}），值不动。`);
+  } else if (opts.provider === "system") {
+    const service = opts.service ?? serviceFromHuman(opts.name);
+    const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
     const r = await Bun.$`security add-generic-password -a ${process.env.USER} -s ${service} -w ${value} -U`.nothrow();
     if (r.exitCode !== 0) { console.error(`钥匙串写入失败（exit=${r.exitCode}）：${r.stderr.toString().trim()}`); process.exit(2); }
     uri = `keychain://${service}`;
@@ -90,8 +111,8 @@ async function cmdAdd(args) {
     console.error(`未知 provider：${opts.provider}`); process.exit(2);
   }
 
-  const raw = updateConfig(opts.name, { uri, ...(opts.aliases.length ? { aliases: opts.aliases } : {}), ...(opts.description ? { description: opts.description } : {}) });
-  console.log(`已登记 ${opts.name} → ${uri}`);
+  const raw = updateConfig(envName, { uri, ...(opts.aliases.length ? { aliases: opts.aliases } : {}), ...(opts.description ? { description: opts.description } : {}) });
+  console.log(`已登记 ${envName} → ${uri}`);
   console.log(`secrets.json 现有条目：${Object.keys(raw).join("、")}`);
   console.log("下个 session 的清单注入将自动包含新条目。");
 }
@@ -100,7 +121,7 @@ async function cmdRemove(args) {
   const name = args.filter((a) => !a.startsWith("--"))[0];
   const purge = args.includes("--purge");
   if (!name || args.some((a) => a.startsWith("--") && a !== "--purge")) {
-    console.error("用法：secret-env remove <NAME> [--purge]   (--purge 连 provider 里的值一起删，目前支持 keychain)");
+    console.error("用法：secret-env remove <NAME> [--purge]   (--purge 连 provider 里的值一起删，目前支持 system)");
     process.exit(2);
   }
   const raw = (() => { try { return JSON.parse(readFileSync(CONFIG_PATH, "utf8")); } catch { return {}; } })();
@@ -112,7 +133,7 @@ async function cmdRemove(args) {
     const r = await Bun.$`security delete-generic-password -s ${service}`.nothrow();
     console.log(r.exitCode === 0 ? `钥匙串条目已删除（service=${service}）` : `钥匙串删除未命中（service=${service}，exit=${r.exitCode}）——可能已不存在，继续`);
   } else if (purge) {
-    console.log(`${def.uri} 的 --purge 暂未支持（keychain 以外请用各自工具清理），只删映射。`);
+    console.log(`${def.uri} 的 --purge 暂未支持（system 以外请用各自工具清理），只删映射。`);
   }
 
   delete raw[name];
