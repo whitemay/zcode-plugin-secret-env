@@ -6,6 +6,16 @@
 
 [简体中文](./README.zh-CN.md) | English
 
+## ⚠️ Version security notice
+
+**All released versions up to and including the current 0.1.x are NOT recommended if your threat model includes on-disk exposure** (shared machines, synced/backed-up config directories, other local software reading your files). Their design stores resolved credential mappings in a **plaintext JSON file** (`~/.config/secret-env/secrets.json`, 0600) and relies on optional system keyring CLIs — protection covers the *agent context* only (values never enter the model, the command text, or the audit log), **not** the disk.
+
+- What 0.1.x does protect: token values never appear in model context, command text, session records, or the hook audit trail.
+- What 0.1.x does **not** protect: the mapping file itself is plaintext; anyone who can read it gets every configured token. Values resolvable via `keychain://` are stored in the OS keyring and are safer, but `bitwarden://`/`viking://`/`onepassword://` mappings still disclose their *target URIs* (not values) in the same file.
+- The fix is planned (not yet released): the `keychain://` backend switches to an encrypted `.kdbx` vault (KeePassXC-compatible), so mappings and high-value values live in an AES-encrypted vault while URIs stay unchanged. Versions after that release will be suitable for the stronger threat model.
+
+If plaintext-on-disk is acceptable in your environment, current versions are fine for their stated purpose.
+
 ## Origin
 
 OpenViking's privacy area is the ideal home for secrets — but when consuming them via the `{{ov_privacy:...}}` placeholder, the MCP side (`privacy_resolve`) resolves the plaintext and it **inevitably flows back into the model context and session records**. However strict the storage side is, that consumption step hands the value to the model. This plugin exists to close that gap: secrets travel from the privacy area straight into the Bash subprocess environment, with the resolution chain completely bypassing the model context.

@@ -37,10 +37,11 @@ AI 会话中执行需要凭据的 Bash 命令时，凭据不能经过模型上�
 
 | scheme | 来源 | 说明 |
 |---|---|---|
-| `keychain://` | 系统密钥库（macOS `security` 命令） | 本机最简 |
+| `keychain://` | 密钥库（scheme 保留；**后端规划中从 macOS `security` 迁往 kdbx 库**，见下） | 跨平台、离线 |
 | `viking://` | OpenViking privacy 层（`ov privacy resolve <category> <target>[/<field>]`，v0.5.1 CLI 实测在） | 跨设备 |
 | `bitwarden://` | Bitwarden CLI（`bw get`） | 跨设备、团队共享 |
 | `onepassword://` | 1Password CLI（`op item get`） | 跨设备；**全线待真机验证**（2026-11-05 实现，本机暂无 op CLI） |
+| ~~`keepassxc://`~~ | **不设此 scheme**（2026-11-05 三次修正定案）：kdbx 库作为 `keychain://` 的后端实现，对外 URI 不变 | — |
 
 > scheme 命名拍板（2026-11-04）：OpenViking provider 直接用真实 scheme 标识 `viking://`，不自造 `ov://`。注意 privacy 条目按 category/target/field 三段寻址，并非 viking:// 资源树 URI，只是复用同一 scheme 字面。
 
@@ -68,6 +69,24 @@ AI 会话中执行需要凭据的 Bash 命令时，凭据不能经过模型上�
 - **viking 写**（已实现）：`ov privacy upsert` 值经 0600 临时文件走 `--values-file`（探针确认主值即条目唯一字段；argv 通道有进程表暴露面，弃用）；path 无 field 段时主值落 `value` 字段。
 - **keychain 写已闭环**（backend.write），作为统一形态的参照实现。
 - **onepassword provider（2026-11-05，待真机验证）**：`onepassword://<item>[/<field>]`，一级 = password，二级 = username/自定义字段 label（totp 显式拒绝待验证后补）。session 注入走配置记录 `OP_SESSION`（如 `keychain://op-session`）经 `--session` 传参，或无记录时依赖 biometric/宿主环境——`--session` 走 argv 有暴露面，op 的 session env 变量名带账号 shorthand 无法离线确定，真机验证时改为 env 注入。写侧与 bw 镜像（create 用 stdin 模板 JSON 待验证；edit 值落 argv 的暴露面妥协同待复核）。
+
+### kdbx 后端（keychain:// 换引擎）规划与威胁模型澄清（2026-11-05 拍板）
+
+**定位先行——本项目威胁模型的边界：** secret-env 解决的是 **token 不入 agent 上下文**（对话/命令文本/环境倾泻），不是密钥的磁盘级绝对安全。secrets.json 本就以明文 token 为基线，任何安全设计评估先对照「防上下文泄漏」这个真实威胁模型，勿拔高到磁盘攻防。
+
+由此两点评定：
+
+1. **master 口令明文写 secrets.json 是接受的设计**：现状 = token 明文配置；引入 kdbx 后 = 库文件本身 AES 加密，口令不随库文件同步/备份，泄漏面净缩小。不引入 keychain 主密钥链、不做 resolve 二次解析——配置值即最终值，读侧比 bitwarden 还简单（无 session 态）。
+2. **keychain:// 后端替换为 kdbx 库，彻底摆脱系统密钥库**（2026-11-05 三次修正定案，推翻「新增 keepassxc:// scheme」方案）：**不引入 `keepassxc://` scheme**——`keychain://` 这个 URI 名字保留为项目密钥库的唯一对外入口，其解析后端从 macOS `security` 命令换成 kdbxweb 直读 `.kdbx` 库。收益：配置层零迁移（所有现存 `keychain://svc[/acct]` URI 原样工作，值搬进库即可）、无外部 CLI 依赖、跨平台统一（Linux/Windows 无系统密钥库也能跑）、不存在 macOS 命令的宿主绑定。原 `security` 路径降级为过渡兼容实现（库路径未配置时回退），新部署只配 kdbx。
+3. **寻址映射**（`keychain://` 语义重定义）：`keychain://<service>` → kdbx 库中标题为 `<service>` 的条目主密钥（password 位）；`keychain://<service>/account` → 二级字段（username 或自定义字段，对齐 §3 二级寻址）。库路径 + master 口令经 secrets.json 配置（本节定位第 1 条口径不变）。`BW_SESSION → keychain://bw-session` 等自举链路 URI 与按名约定全不动，只换值的落位。
+
+实现要点（规划）：
+
+- **路线**：kdbxweb（纯 JS + WebCrypto，运行时中立天然满足 Bun/Electron Node 双运行时）+ hash-wasm 注入 argon2 实现（kdbxweb 不内置 Argon2，须 `CryptoEngine.setArgon2Impl` 自注入；选 wasm 版避开 native 平台依赖）。备选 kdbx-wasm（Rust+WASM，argon2 内置、写 API 齐全）虽省事但 v0.3 零下游依赖，成熟度不够押注。
+- **寻址**：对外仍是 `keychain://<service>[/<account>]`（scheme 不变，语义重定义，见上第 3 条）；库路径 + master 口令写在 secrets.json 的 keychain 后端配置块中。
+- **库路径与 master 口令**：库路径直接写 URI、口令直接写 secrets.json 映射值（见定位第 1 条），均可 `~/` 展开。
+- **第一版只读**：token 类凭据多由服务方生成，写需求低；kdbxweb 写 API 齐全，写侧自治后续按 §「provider 写侧自治」补齐。
+- **生态现状**（2026-11-05 调研）：kdbxweb npm 2.1.1 停发于 2021（仓库 2024-12 仍有提交），但 KDBX 格式稳定、KeeWeb 背书，成熟度换确定性值得。
 
 ### bitwarden:// 的两级解析（2026-11-04，0.1.1）
 
