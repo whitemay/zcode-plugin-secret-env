@@ -27,7 +27,25 @@ PreToolUse(Bash) 钩子扫描命令文本中的**显式引用**（`{{secret:NAME
 - **provider**：`keychain://`（macOS 钥匙串）/ `viking://`（OpenViking privacy 层，`ov privacy resolve`）/ `bitwarden://`（Bitwarden CLI）/ `onepassword://`（1Password CLI）
 - **dump 黑名单**：命令同时含密钥引用与倾泻意图（`env` / `printenv` / 裸 `set` / 裸 `export`）才拒绝
 - **单引号禁忌**：引用落在单引号内不会被展开 → 整条命令拒绝（宁可失败，不做魔法）
-- **显式化约定**：钩子是纯文本扫描的机械层；工具隐式消费环境变量（如裸 `gh pr list` 读 `GH_TOKEN`）由模型按 skill 引导显式写成 `GH_TOKEN=$GH_TOKEN gh pr list`
+- **显式化约定**：钩子是纯文本扫描的机械层；工具隐式消费环境变量（如裸 `gh pr list` 读 `' + 'GH_TOKEN' + '`）由模型按 skill 引导显式写成 `' + 'GH_TOKEN' + '=$' + 'GH_TOKEN' + ' gh pr list`
+
+## 与其它 agent harness 协作
+
+凡凭据走环境变量的工具，**零集成代码**即可接入——命令里显式写周知变量名，钩子即注入：
+
+```bash
+DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY pi        # pi coding agent（读 DeepSeek 密钥）
+OPENAI_API_KEY=$OPENAI_API_KEY my-cli        # 同一句式适用于一切环境变量凭据的工具
+```
+
+由此形成两级集成光谱：
+
+| 梯队 | 机制 | 成本 | 覆盖 |
+|---|---|---|---|
+| 环境变量注入 | 命令中显式 `$`VAR` 引用 → 钩子注入子进程环境 | 零代码 | 一切「凭据走环境变量」的 harness（生态惯例） |
+| 拦截点适配器 | 按宿主改写工具调用（ZCode PreToolUse 钩子 / opencode 插件 / DSH cordis 包装器） | 每宿主一次适配 | harness 自己作为 agent 跑 Bash、其命令需要注入的场景 |
+
+两级可组合：ZCode 内的 agent 以子进程调用另一 harness（凭据同样经钩子注入），在 harness 之间流转而全程不入模型上下文。
 
 ## 安装
 

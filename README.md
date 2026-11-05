@@ -27,7 +27,25 @@ A PreToolUse(Bash) hook scans the command text for **explicit references** (a `{
 - **Providers**: `keychain://` (macOS Keychain) / `viking://` (OpenViking privacy layer via `ov privacy resolve`) / `bitwarden://` (Bitwarden CLI) / `onepassword://` (1Password CLI)
 - **Dump blacklist**: a command is rejected only when it contains both a secret reference and a dump intent (`env` / `printenv` / bare `set` / bare `export`) at command position
 - **Single-quote taboo**: a reference inside single quotes would never expand → the whole command is rejected (fail loudly, no magic)
-- **Explicit-reference convention**: the hook is a dumb text scanner; tools that consume env vars implicitly (e.g. bare `gh pr list` reading `GH_TOKEN`) are handled by the model per the skill, written explicitly as `GH_TOKEN=$GH_TOKEN gh pr list`
+- **Explicit-reference convention**: the hook is a dumb text scanner; tools that consume env vars implicitly (e.g. bare `gh pr list` reading `' + 'GH_TOKEN' + '`) are handled by the model per the skill, written explicitly as `' + 'GH_TOKEN' + '=$' + 'GH_TOKEN' + ' gh pr list`
+
+## Working with other agent harnesses
+
+Any tool that reads credentials from environment variables is supported with **zero integration code** — write the well-known variable explicitly and the hook injects it:
+
+```bash
+DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY pi        # pi coding agent (reads the DeepSeek key)
+OPENAI_API_KEY=$OPENAI_API_KEY my-cli        # same pattern for any env-var-driven tool
+```
+
+This forms a two-tier integration spectrum:
+
+| Tier | Mechanism | Cost | Covers |
+|---|---|---|---|
+| Env-var injection | explicit `$`VAR` reference in the command → hook injects into the subprocess env | zero code | every harness whose credentials come from env vars (the common convention) |
+| Interception adapters | per-host rewrite of tool calls (ZCode PreToolUse hook / opencode plugin / DSH cordis wrapper) | one adapter per host | hosts where the *agent's own Bash commands* need injection |
+
+The two compose: an agent running inside ZCode can invoke another harness as a subprocess, and credentials flow harness-to-harness without ever entering the model context.
 
 ## Install
 
