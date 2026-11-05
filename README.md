@@ -8,13 +8,9 @@
 
 ## ⚠️ Version security notice
 
-**All released versions up to and including the current 0.1.x are NOT recommended if your threat model includes on-disk exposure** (shared machines, synced/backed-up config directories, other local software reading your files). Their design stores resolved credential mappings in a **plaintext JSON file** (`~/.config/secret-env/secrets.json`, 0600) and relies on optional system keyring CLIs — protection covers the *agent context* only (values never enter the model, the command text, or the audit log), **not** the disk.
+**Versions up to and including 0.1.x are not recommended.** Their design stores credential mappings (and, when configured, the vault master password) in a **plaintext JSON file** (`~/.config/secret-env/secrets.json`, 0600). Protection covers the *agent context* only — values never enter the model, the command text, or the audit log — **not** the disk: anyone who can read the mapping file gets every configured token.
 
-- What 0.1.x does protect: token values never appear in model context, command text, session records, or the hook audit trail.
-- What 0.1.x does **not** protect: the mapping file itself is plaintext; anyone who can read it gets every configured token. Values resolvable via `keychain://` are stored in the OS keyring and are safer, but `bitwarden://`/`viking://`/`onepassword://` mappings still disclose their *target URIs* (not values) in the same file.
-- The fix is planned (not yet released): the `keychain://` backend switches to an encrypted `.kdbx` vault (KeePassXC-compatible), so mappings and high-value values live in an AES-encrypted vault while URIs stay unchanged. Versions after that release will be suitable for the stronger threat model.
-
-If plaintext-on-disk is acceptable in your environment, current versions are fine for their stated purpose.
+From **0.2.0 onwards the tool uses a KeePassXC-compatible encrypted `.kdbx` vault** as its secret store. It does **not** use the system keychain and does **not** touch system-protected secrets (OS keyring entries, login/payment credentials stay entirely outside this tool's scope). Mappings and high-value values live in the AES-encrypted vault; only the vault path and master password are configured in secrets.json.
 
 ## Origin
 
