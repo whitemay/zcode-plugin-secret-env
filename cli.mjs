@@ -7,7 +7,7 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { argv } from "bun";
-import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeValue, writeEnvFile, shellSingleQuote, systemBackend } from "./core.mjs";
+import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeValue, writeEnvFile, shellSingleQuote, keychainBackend } from "./core.mjs";
 
 const LOG = "/tmp/zcode-secret-env.log";
 const CONFIG_PATH = join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json");
@@ -101,7 +101,7 @@ async function cmdAdd(args) {
     const service = opts.service ?? serviceFromHuman(opts.name);
     const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
     try {
-      const backend = systemBackend(); // 平台判断 + 二进制探测，先于人话报错
+      const backend = await keychainBackend(loadConfig()); // kdbx 配置则写库，否则系统密钥库（二进制探测/库配置校验先于人话报错）
       await backend.write(service, value, opts.user);
     } catch (e) {
       console.error(`入库失败：${e.message}`);
@@ -171,9 +171,9 @@ async function cmdRemove(args) {
   if (purge && def.uri.startsWith("keychain://")) {
     const service = def.uri.slice("keychain://".length);
     try {
-      const backend = systemBackend(); // 平台判断 + 二进制探测，先于人话报错
+      const backend = await keychainBackend(loadConfig());
       const hit = await backend.remove(service);
-      console.log(hit ? `系统密钥库条目已删除（service=${service}）` : `删除未命中（service=${service}）——可能已不存在，继续`);
+      console.log(hit ? `密钥库条目已删除（service=${service}）` : `删除未命中（service=${service}）——可能已不存在，继续`);
     } catch (e) {
       console.error(`--purge 失败：${e.message}（映射仍会删除）`);
     }

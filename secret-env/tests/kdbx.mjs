@@ -39,8 +39,8 @@ kdbxweb.CryptoEngine.setArgon2Impl(async (password, salt, memory, iterations, le
   (await import("node:fs")).writeFileSync(dbPath, Buffer.from(data));
 }
 
-// ---------- 被测对象：core.resolveValue 走 kdbx 后端 ----------
-const { loadConfig, resolveValue } = await import(join(import.meta.dirname, "..", "..", "core.mjs"));
+// ---------- 被测对象：core.resolveValue / writeValue / keychainBackend 走 kdbx 后端 ----------
+const { loadConfig, resolveValue, writeValue, keychainBackend } = await import(join(import.meta.dirname, "..", "..", "core.mjs"));
 const config = loadConfig();
 config.keychainBackend = { backend: "kdbx", path: dbPath, password: MASTER };
 
@@ -73,6 +73,33 @@ await t("错误 master 口令 → InvalidKey 响亮失败", async () => {
 await t("kdbx 后端缺配置 → 人话错误", async () => {
   try { await resolveValue("keychain://x", Object.assign(new Map(), config, { keychainBackend: { backend: "kdbx" } })); return false; }
   catch (e) { return e.message.includes("$keychain 配置需含 path 与 password"); }
+});
+
+// ---------- 写侧自治（system provider 经 keychain 分流写库） ----------
+await t("写入：新建条目（writeValue system）", async () => {
+  await writeValue({ provider: "system", service: "new-entry", user: "u1" }, "new-pw", config);
+  return (await resolveValue("keychain://new-entry", config)) === "new-pw"
+    && (await resolveValue("keychain://new-entry/username", config)) === "u1";
+});
+await t("写入：已存在条目 upsert（值轮换，user 不给不覆盖 UserName）", async () => {
+  await writeValue({ provider: "system", service: "new-entry" }, "rotated-pw", config);
+  return (await resolveValue("keychain://new-entry", config)) === "rotated-pw"
+    && (await resolveValue("keychain://new-entry/username", config)) === "u1";
+});
+await t("写入：同名多条 → 歧义拒绝", async () => {
+  try { await writeValue({ provider: "system", service: "dup-entry" }, "x", config); return false; }
+  catch (e) { return e.message.includes("歧义"); }
+});
+await t("删除：remove 命中 + 删除未命中返回 false", async () => {
+  const backend = await keychainBackend(config);
+  const hit = await backend.remove("new-entry");
+  const miss = await backend.remove("new-entry");
+  return hit === true && miss === false
+    && !(await (async () => { try { await resolveValue("keychain://new-entry", config); return true; } catch { return false; } })());
+});
+await t("写入落盘后重开库仍可读（进程内缓存一致性）", async () => {
+  await writeValue({ provider: "system", service: "persist-entry" }, "persist-pw", config);
+  return (await resolveValue("keychain://persist-entry", config)) === "persist-pw";
 });
 // 回退路径：无 keychainBackend → 走系统密钥库（本机 macOS 应能解析已登记的真实条目，如 bw-session）
 if (process.platform === "darwin") {

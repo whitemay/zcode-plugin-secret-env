@@ -136,14 +136,16 @@ export function systemBackend() {
 // 解析后端从系统 security 命令换成 kdbxweb 直读 .kdbx 库（路径 ~/ 展开，口令明文入配置是
 // 已拍板的威胁模型口径：防线=防上下文泄漏，非磁盘绝对安全）。未配置则回退 systemBackend（过渡兼容）。
 // 寻址映射：keychain://<svc> → 标题 <svc> 条目的 Password 位；/<field> → UserName（account/username）
-// 或 URL/Notes/自定义字段名。同名条目 >1 拒绝（与 macos-keychain 防歧义同规）。
-let _kdbxState = null; // {path, password, promise} — 进程内缓存（钩子进程单命令生命周期，读侧无写顾虑）
+// 或 URL/Notes/自定义字段名。同名条目 >1 拒绝（与 macos-keychain 防歧义同规）。读写同构（写语义镜像 bw）。
+let _kdbxState = null; // {path, password, promise} — 进程内缓存（钩子进程单命令生命周期）
+let _kdbxweb = null; // UMD 归一化后的命名空间，写侧建 ProtectedValue 用
 
 async function kdbxLoad(path, password) {
   if (_kdbxState && _kdbxState.path === path && _kdbxState.password === password) return _kdbxState.promise;
   const promise = (async () => {
     const ns = await import("kdbxweb");
     const kdbxweb = ns.Kdbx ? ns : ns.default; // UMD：Bun 命名空间可用，Node 只在 default（PoC 实证）
+    _kdbxweb = kdbxweb;
     if (!globalThis.__secretEnvArgon2) {
       const hw = await import("hash-wasm");
       kdbxweb.CryptoEngine.setArgon2Impl(async (password, salt, memory, iterations, length, parallelism, type) => {
@@ -162,12 +164,26 @@ async function kdbxLoad(path, password) {
 
 export async function kdbxBackend(cfg) {
   if (!cfg?.path || !cfg?.password) throw new Error('$keychain 配置需含 path 与 password（kdbx 后端）');
+  const kdbxProtected = (v) => _kdbxweb.ProtectedValue.fromString(v);
   const getText = (v) => (v instanceof Object && typeof v.getText === "function" ? v.getText() : String(v ?? ""));
   const db = await kdbxLoad(cfg.path, cfg.password);
+  // 活条目视图：排除回收站子树（db.remove 是软删除，条目进 Recycle Bin 组，
+  // 而 allEntries() 遍历子组——不过滤的话已删条目仍可被寻址命中）
+  const liveEntries = () => {
+    const bin = db.meta.recycleBinUuid ? db.getGroup(db.meta.recycleBinUuid) : null;
+    const out = [];
+    const walk = (g) => {
+      if (bin && g.uuid.id === bin.uuid.id) return;
+      for (const sub of g.groups) walk(sub);
+      for (const e of g.entries) out.push(e);
+    };
+    walk(db.getDefaultGroup());
+    return out;
+  };
   return {
     backend: "kdbx",
     read: async (service, field) => {
-      const hits = [...db.getDefaultGroup().allEntries()].filter((e) => e.fields.get("Title") === service);
+      const hits = liveEntries().filter((e) => e.fields.get("Title") === service);
       if (hits.length === 0) throw new Error(`kdbx 库无标题为「${service}」的条目（${cfg.path}）`);
       if (hits.length > 1) throw new Error(`kdbx 库存在 ${hits.length} 条同名条目「${service}」，寻址歧义——请消歧（改标题）`);
       const e = hits[0];
@@ -184,11 +200,34 @@ export async function kdbxBackend(cfg) {
       }
       return getText(v);
     },
+    // 写语义镜像 bitwarden：同名条目存在 → 改 Password 位（--user 顺路写 UserName 位）；
+    // 不存在 → 新建条目（Title=service）；同名 >1 → 歧义拒绝。改后即落盘（0600 保持）。
+    write: async (service, value, user) => {
+      const hits = liveEntries().filter((e) => e.fields.get("Title") === service);
+      if (hits.length > 1) throw new Error(`kdbx 库存在 ${hits.length} 条同名条目「${service}」，写入歧义——请消歧`);
+      const e = hits[0] ?? db.createEntry(db.getDefaultGroup());
+      if (!hits[0]) e.fields.set("Title", service);
+      e.fields.set("Password", kdbxProtected(value));
+      if (user) e.fields.set("UserName", user);
+      e.times.update();
+      const data = Buffer.from(await db.save());
+      writeFileSync(cfg.path, data, { mode: 0o600 });
+    },
+    remove: async (service) => {
+      const hits = liveEntries().filter((e) => e.fields.get("Title") === service);
+      if (hits.length > 1) throw new Error(`kdbx 库存在 ${hits.length} 条同名条目「${service}」，删除歧义——请消歧`);
+      if (hits.length === 0) return false;
+      db.remove(hits[0]);
+      const data = Buffer.from(await db.save());
+      writeFileSync(cfg.path, data, { mode: 0o600 });
+      return true;
+    },
   };
 }
 
-// keychain:// 解析后端选择：配置了 kdbx 后端 → kdbx；否则按平台回退系统密钥库（过渡兼容，DESIGN §3）
-async function keychainBackend(config) {
+// keychain:// 后端选择：配置了 kdbx 后端 → kdbx；否则按平台回退系统密钥库（过渡兼容，DESIGN §3）。
+// 读写同构共用此分流（resolveValue 与 writeValue/remove --purge 都走它）。
+export async function keychainBackend(config) {
   if (config?.keychainBackend?.backend === "kdbx") return kdbxBackend(config.keychainBackend);
   return systemBackend();
 }
@@ -211,7 +250,8 @@ async function bwSessionOpts(config) {
 //     | {provider:"viking", parts:[category, target, field?]}. value 为明文，只经 stdin/临时文件。
 export async function writeValue(spec, value, config = null) {
   if (spec.provider === "system") {
-    const backend = systemBackend();
+    // 经 keychain 后端分流：配置 kdbx → 写库；未配置 → 系统密钥库（DESIGN §3 keychain:// 换引擎）
+    const backend = await keychainBackend(config);
     await backend.write(spec.service, value, spec.user);
     return;
   }
