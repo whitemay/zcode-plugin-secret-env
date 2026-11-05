@@ -1,12 +1,14 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 // secret-env 全局 CLI。与宿主无关的三个入口：
 //   secret-env add <NAME> ...   用户终端执行：交互收值（隐藏输入）→ 入库 → 登记 secrets.json
 //   secret-env list             打印名字+别名+描述清单（无真值）
 //   secret-env hook zcode       ZCode PreToolUse 钩子协议壳（stdin/stdout JSON）
 // 真值只在：用户终端输入 → provider 存储 → 子进程环境。任何环节不进模型上下文。
+// 运行时中立（与 core.mjs 同规）：bin 须在 Bun/Node/pnpm 任意全局安装下可跑，不用 Bun 专属 API。
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { argv } from "bun";
+import { spawnSync } from "node:child_process";
+const argv = process.argv;
 import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeValue, writeEnvFile, shellSingleQuote, keychainBackend, guardPaths } from "./core.mjs";
 
 const LOG = "/tmp/zcode-secret-env.log";
@@ -55,7 +57,7 @@ function parseAddArgs(args) {
 
 async function promptHiddenValue(label) {
   // 用户终端隐藏输入：read -rs 在 bash 子进程里关掉回显，值经 stdout 回到本进程内存
-  const r = Bun.spawnSync(["bash", "-c", `read -rs -p ${JSON.stringify(label)} v && echo "$v"`], { stdin: "inherit", stdout: "pipe" });
+  const r = spawnSync("bash", ["-c", `read -rs -p ${JSON.stringify(label)} v && echo "$v"`], { stdin: "inherit", stdio: ["inherit", "pipe", "inherit"], encoding: "utf8" });
   const v = r.stdout.toString().replace(/\n$/, "");
   if (!v) { console.error("\n空值，放弃。"); process.exit(2); }
   console.log("");
