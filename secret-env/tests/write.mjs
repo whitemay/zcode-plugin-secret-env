@@ -55,5 +55,28 @@ try {
   } catch {}
 }
 
+// ---------- 3. onepassword：URI 解析守卫（不依赖 op）；读写往返仅在 op 可用时跑 ----------
+console.log("onepassword：");
+await expectErr("URI 三段以上拒绝", resolveValue("onepassword://a/b/c", config), "需为");
+const hasOp = (() => { try { execFileSync("op", ["--version"], { stdio: "ignore" }); return true; } catch { return false; } })();
+if (!hasOp) {
+  console.log("  ⏭️ 真机往返跳过（本机无 op CLI）——待安装后补跑 create/edit/字段往返");
+} else {
+  const OP = "secret-env-op-probe";
+  try {
+    await writeValue({ provider: "onepassword", item: OP, user: "op-usr" }, "o".repeat(10), config);
+    check("新建条目 password 位", (await resolveValue(`onepassword://${OP}`, config)).length === 10);
+    check("--user 写 username 位", (await resolveValue(`onepassword://${OP}/username`, config)) === "op-usr");
+    await writeValue({ provider: "onepassword", item: OP }, "u".repeat(8), config);
+    check("已存在条目更新 password", (await resolveValue(`onepassword://${OP}`, config)).length === 8);
+    await writeValue({ provider: "onepassword", item: OP, field: "opf" }, "z".repeat(15), config);
+    check("--field upsert 自定义字段", (await resolveValue(`onepassword://${OP}/opf`, config)).length === 15);
+  } catch (e) {
+    failed++; console.log(`  ❌ onepassword 真机往返 — ${e.message.slice(0, 100)}`);
+  } finally {
+    try { execFileSync("op", ["item", "delete", OP]); } catch {}
+  }
+}
+
 console.log(failed ? `\n${failed} 项失败` : "\n全部通过");
 process.exit(failed ? 1 : 0);

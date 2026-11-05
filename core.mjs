@@ -175,6 +175,30 @@ export async function writeValue(spec, value, config = null) {
     }
     return;
   }
+  if (spec.provider === "onepassword") {
+    // 写与读同构，落位与 bw 镜像。⚠️ 全线待真机验证（2026-11-05 实现，本机暂无 op CLI）：
+    // - create 用 stdin 模板 JSON（op item create 接受 "-" 读 stdin，待验证）；edit 值落 argv——
+    //   op 无已知 stdin 编辑通道，暴露面妥协，真机验证时复核。
+    const sess = await opSessionArgs(config);
+    if (spec.field) {
+      const out = runBin("op", [...sess, "item", "edit", spec.item, `${spec.field}=${value}`]);
+      if (!out.ok) throw new Error(`op item edit 失败（exit=${out.exitCode} err=${out.stderr}）`);
+      return;
+    }
+    const probe = runBin("op", [...sess, "item", "get", spec.item], {});
+    if (probe.ok) {
+      const out = runBin("op", [...sess, "item", "edit", spec.item, `password=${value}`, ...(spec.user ? [`username=${spec.user}`] : [])]);
+      if (!out.ok) throw new Error(`op item edit 失败（exit=${out.exitCode} err=${out.stderr}）`);
+    } else {
+      const tmpl = { category: "LOGIN", title: spec.item, fields: [
+        { id: "username", type: "STRING", value: spec.user ?? null, label: "username" },
+        { id: "password", type: "CONCEALED", value, label: "password" },
+      ] };
+      const out = runBin("op", [...sess, "item", "create", "--category", "login", "-"], { input: JSON.stringify(tmpl) });
+      if (!out.ok) throw new Error(`op item create 失败（exit=${out.exitCode} err=${out.stderr}）`);
+    }
+    return;
+  }
   if (spec.provider === "viking") {
     // 值经 0600 临时文件（--values-file），不落 argv；path 无 field 段时主值写进 value 字段
     const [cat, target, field] = spec.parts;
@@ -190,6 +214,17 @@ export async function writeValue(spec, value, config = null) {
     return;
   }
   throw new Error(`未知写入 provider：${spec.provider}`);
+}
+
+// onepassword session 注入：配置里存在 OP_SESSION 记录（如 keychain://op-session）→ 解析后经 --session 传给 op。
+// ⚠️ --session 走 argv 有进程表暴露面——op 的 session env 变量名带账号 shorthand（OP_SESSION_<xxx>），
+// 无法不验真机就确定；真机验证时若 shorthand 可探测，改为 env 注入。无 OP_SESSION 记录时依赖 biometric/宿主环境。
+async function opSessionArgs(config) {
+  const sess = config?.get("OP_SESSION");
+  if (!sess) return [];
+  if (sess.uri.startsWith("onepassword://"))
+    throw new Error("OP_SESSION 记录的 uri 不能是 onepassword://（需要解锁 1Password 才能解锁，死循环）");
+  return ["--session", await resolveValue(sess.uri, config)];
 }
 
 // bitwarden item JSON → 自定义字段值（保留键分流在 resolveValue，不进这里）
@@ -249,6 +284,20 @@ export async function resolveValue(uri, config = null) {
     const r = runBin("bw", ["get", "item", item, "--raw"], opts);
     if (!r.ok) throw new Error(`bw 未取到条目 ${item}（exit=${r.exitCode} err=${r.stderr}）`);
     return pickBwField(JSON.parse(r.stdout), sub);
+  }
+  if (scheme === "onepassword") {
+    // 一般化寻址：onepassword://<item>[/<field>]。一级 = password，二级 = username/自定义字段 label。
+    // 无 OP_SESSION 记录时依赖 biometric（1Password 桌面 App 集成）或宿主环境会话。
+    const sess = await opSessionArgs(config);
+    const parts = rest.split("/");
+    if (parts.length > 2) throw new Error(`onepassword:// URI 需为 <item>[/<field>]：${uri}`);
+    const [item, field] = parts;
+    const f = field ?? "password";
+    if (f === "totp") throw new Error("onepassword provider 暂不支持 totp 字段（op 的 TOTP 寻址待真机验证后补）");
+    const r = runBin("op", [...sess, "item", "get", item, "--fields", f]);
+    const out = r.ok ? r.stdout.replace(/\n$/, "") : "";
+    if (!out) throw new Error(`op 未取到 ${item}/${f}（exit=${r.exitCode} err=${r.stderr}）`);
+    return out;
   }
   throw new Error(`未知 provider scheme：${scheme}://`);
 }

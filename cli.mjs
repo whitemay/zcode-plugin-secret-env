@@ -74,7 +74,7 @@ function updateConfig(name, def) {
 async function cmdAdd(args) {
   const opts = parseAddArgs(args);
   if (!opts.name) {
-    console.error("用法：secret-env add -n <name> [TOKEN] [--alias A]... [--desc D] [--provider system|viking|bitwarden ...]\n  统一流程：收值（隐藏输入或位置参数）→ provider 写入 → 登记 uri。写侧自治：bitwarden 走配置里的 BW_SESSION，viking 走本机 ov。\n  system：--service 可选（缺省自动命名），--user 可选（keychain account 属性，缺省 = 当前系统用户）\n  bitwarden：--item <条目名> 必选；--field <字段> 二级写入（条目须已存在）；--user 写 username 位\n  viking：--path <category>/<target>[/<field>]；无 field 时主值落 value 字段\n  已存在条目不带 --provider 时进入维护模式（只改别名/描述），显式给 --provider 则强制重新收值");
+    console.error("用法：secret-env add -n <name> [TOKEN] [--alias A]... [--desc D] [--provider system|viking|bitwarden|onepassword ...]\n  统一流程：收值（隐藏输入或位置参数）→ provider 写入 → 登记 uri。写侧自治：bitwarden 走配置里的 BW_SESSION，onepassword 走 OP_SESSION 或 biometric，viking 走本机 ov。\n  system：--service 可选（缺省自动命名），--user 可选（keychain account 属性，缺省 = 当前系统用户）\n  bitwarden：--item <条目名> 必选；--field <字段> 二级写入（条目须已存在）；--user 写 username 位\n  onepassword：--item <条目名> 必选；--field <字段> 二级写入；--user 写 username 位（待真机验证）\n  viking：--path <category>/<target>[/<field>]；无 field 时主值落 value 字段\n  已存在条目不带 --provider 时进入维护模式（只改别名/描述），显式给 --provider 则强制重新收值");
     process.exit(2);
   }
   const envName = envNameFromHuman(opts.name);
@@ -120,6 +120,18 @@ async function cmdAdd(args) {
       process.exit(2);
     }
     uri = `bitwarden://${opts.item}${opts.field ? `/${opts.field}` : ""}`;
+  } else if (opts.provider === "onepassword") {
+    if (!opts.item) { console.error("onepassword 需要 --item <item>[，--field <字段> 二级写入]"); process.exit(2); }
+    if (opts.user && opts.field) { console.error("--user 与 --field 互斥"); process.exit(2); }
+    const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
+    try {
+      // 写侧自治：经配置里的 OP_SESSION 记录（或 biometric）写入 1Password。⚠️ 全线待真机验证。
+      await writeValue({ provider: "onepassword", item: opts.item, field: opts.field, user: opts.user }, value, loadConfig());
+    } catch (e) {
+      console.error(`入库失败：${e.message}`);
+      process.exit(2);
+    }
+    uri = `onepassword://${opts.item}${opts.field ? `/${opts.field}` : ""}`;
   } else if (opts.provider === "viking") {
     if (!opts.path) { console.error("viking 需要 --path <category>/<target>[/<field>]"); process.exit(2); }
     const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
