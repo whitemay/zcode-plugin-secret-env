@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 
 export const ENV_DIR = join(tmpdir(), "secret-env-injections");
+
+// vault 库路径是约定不是配置（2026-11-05 拍板）：恒为 ~/.config/secret-env/vault.kdbx。
+// $keychain 只剩一个可选项 password（master 口令明文 → 内联直读）。SENV_VAULT_PATH 仅供测试重定向。
+export const vaultPath = () => process.env.SENV_VAULT_PATH ?? join(process.env.HOME ?? "~", ".config", "secret-env", "vault.kdbx");
 export const STALE_MS = 15 * 60 * 1000;
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -28,7 +32,7 @@ export function loadConfig() {
       }
       // keychain 后端配置（稳定路径优先，只取第一处出现的）
       if (!map.keychainBackend && raw.$keychain) {
-        map.keychainBackend = raw.$keychain; // {backend:"kdbx", path, password} — kdbx 后端；缺省走系统密钥库
+        map.keychainBackend = raw.$keychain; // {password?} — 有 password 走 kdbx 内联直读；无此键走系统密钥库（过渡）
       }
     } catch {}
   }
@@ -231,8 +235,8 @@ export async function kdbxBackend(cfg) {
 // 配置维护走 secret-env add/remove（用户终端）或用户亲手编辑。
 export function guardPaths(config) {
   const fragments = [".config/secret-env", join(HERE, "secret-env", "secrets.json")];
-  const vault = config?.keychainBackend?.path;
-  if (vault) {
+  const vault = config?.keychainBackend?.path ?? vaultPath();
+  {
     const expanded = vault.startsWith("~") ? join(process.env.HOME ?? "~", vault.slice(1)) : vault;
     fragments.push(expanded, vault); // ~/ 形态与展开形态都拦
   }
@@ -241,9 +245,13 @@ export function guardPaths(config) {
 
 // keychain:// 后端选择：配置了 kdbx 后端 → kdbx；否则按平台回退系统密钥库（过渡兼容，DESIGN §3）。
 // 读写同构共用此分流（resolveValue 与 writeValue/remove --purge 都走它）。
+// keychain:// 后端选择（2026-11-05 简化）：$keychain 存在即走 kdbx（backend/path 不可配——
+// 引擎恒为 kdbx、库路径恒为约定路径；遗留配置里的 path 仍被尊重作过渡）；password 必填（明文，
+// 已拍板的防上下文泄漏口径）。无 $keychain → 按平台回退系统密钥库（过渡兼容）。
 export async function keychainBackend(config) {
-  if (config?.keychainBackend?.backend === "kdbx") return kdbxBackend(config.keychainBackend);
-  return systemBackend();
+  const cfg = config?.keychainBackend;
+  if (!cfg) return systemBackend();
+  return kdbxBackend({ path: cfg.path ?? vaultPath(), password: cfg.password });
 }
 
 // ---------- 写侧：provider 自治写入（配置即能力，DESIGN §3） ----------
