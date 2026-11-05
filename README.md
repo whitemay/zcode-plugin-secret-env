@@ -34,7 +34,7 @@ A PreToolUse(Bash) hook scans the command text for **explicit references** (a `{
 This project is an npm package plus thin per-host shells. Global command (the real body):
 
 ```bash
-bun link   # run inside the repo; registers the secret-env command (or npm i -g .)
+bun link   # run inside the repo; registers both the secret-env and senv commands (same CLI, short alias) (or npm i -g .)
 npm i -g @foperate/secret-env   # or install the published package
 ```
 

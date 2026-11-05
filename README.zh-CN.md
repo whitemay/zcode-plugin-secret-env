@@ -34,7 +34,7 @@ PreToolUse(Bash) 钩子扫描命令文本中的**显式引用**（`{{secret:NAME
 本项目是 npm 包 + 各宿主薄壳。全局命令（真身）：
 
 ```bash
-bun link   # 仓库内执行，注册 secret-env 全局命令（或 npm i -g .）
+bun link   # 仓库内执行，注册 secret-env 与 senv 双命令名（同一 CLI，短别名）（或 npm i -g .）
 npm i -g @foperate/secret-env   # 或安装已发布的 npm 包
 ```
 
