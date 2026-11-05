@@ -72,6 +72,35 @@ secret-env add -n myvar --provider bitwarden --item "条目名" --user "someone"
 - 名字含空格/中文无需转义（字段名含空格不建议用于 URI）
 - **session key 生命周期**：每次 `bw unlock` 换新值 → 重跑上面的 `security add-generic-password` 覆盖；过期后 bitwarden 凭据读写报 bw 原始错误（locked/not unlocked 字样即此因）
 
+## onepassword://（1Password CLI，跨设备）
+
+> ⚠️ 本 provider 尚未真机验证（实现于无 op CLI 的机器），首次使用如有报错以 op 原始错误为准。
+
+准备（一次性）：
+
+```bash
+brew install 1password-cli
+op signin                      # 或开启 1Password 桌面 App 的 biometric 集成后免 signin
+```
+
+可选：登记 OP_SESSION（与 BW_SESSION 同构的基础设施条目）：
+
+```bash
+security add-generic-password -U -s op-session -a "$USER" -w   # 粘贴 op signin --raw 输出的 session token
+# secrets.json 登记 "OP_SESSION": { "uri": "keychain://op-session" }
+```
+
+（不登记则依赖 biometric 或宿主环境的 OP_SESSION_<shorthand> 变量。）
+
+写侧自治（与 bitwarden 镜像）：
+
+```bash
+secret-env add -n myvar --provider onepassword --item "条目名"           # 收值 → password 位（不存在则新建）
+secret-env add -n myvar.key --provider onepassword --item "条目名" --field "api key"   # 收值 → 自定义字段
+```
+
+要点：一级 = password；`/username` 与自定义字段 label 可二级寻址；totp 暂不支持。
+
 ## 验证
 
 配置后在新命令里引用（值不出现在输出）：

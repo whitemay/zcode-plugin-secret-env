@@ -40,6 +40,7 @@ AI 会话中执行需要凭据的 Bash 命令时，凭据不能经过模型上�
 | `keychain://` | 系统密钥库（macOS `security` 命令） | 本机最简 |
 | `viking://` | OpenViking privacy 层（`ov privacy resolve <category> <target>[/<field>]`，v0.5.1 CLI 实测在） | 跨设备 |
 | `bitwarden://` | Bitwarden CLI（`bw get`） | 跨设备、团队共享 |
+| `onepassword://` | 1Password CLI（`op item get`） | 跨设备；**全线待真机验证**（2026-11-05 实现，本机暂无 op CLI） |
 
 > scheme 命名拍板（2026-11-04）：OpenViking provider 直接用真实 scheme 标识 `viking://`，不自造 `ov://`。注意 privacy 条目按 category/target/field 三段寻址，并非 viking:// 资源树 URI，只是复用同一 scheme 字面。
 
@@ -66,6 +67,7 @@ AI 会话中执行需要凭据的 Bash 命令时，凭据不能经过模型上�
 - **bitwarden 写语义**（已实现）：`--item X`（不存在）→ 新建 login 条目，值进 password 位，`--user` 顺路写 username 位；`--item X --field F` → 已存在条目上 upsert 自定义字段（不存在则拒绝，不隐式建条目）。bw create/edit 的 encodedJson = base64(JSON)，值经 stdin 不落 argv。
 - **viking 写**（已实现）：`ov privacy upsert` 值经 0600 临时文件走 `--values-file`（探针确认主值即条目唯一字段；argv 通道有进程表暴露面，弃用）；path 无 field 段时主值落 `value` 字段。
 - **keychain 写已闭环**（backend.write），作为统一形态的参照实现。
+- **onepassword provider（2026-11-05，待真机验证）**：`onepassword://<item>[/<field>]`，一级 = password，二级 = username/自定义字段 label（totp 显式拒绝待验证后补）。session 注入走配置记录 `OP_SESSION`（如 `keychain://op-session`）经 `--session` 传参，或无记录时依赖 biometric/宿主环境——`--session` 走 argv 有暴露面，op 的 session env 变量名带账号 shorthand 无法离线确定，真机验证时改为 env 注入。写侧与 bw 镜像（create 用 stdin 模板 JSON 待验证；edit 值落 argv 的暴露面妥协同待复核）。
 
 ### bitwarden:// 的两级解析（2026-11-04，0.1.1）
 
