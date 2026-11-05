@@ -23,7 +23,8 @@
     "url": "git+https://github.com/whitemay/zcode-plugin-secret-env.git"
   },
   "bin": {
-    "secret-env": "./cli.mjs"
+    "secret-env": "./cli.mjs",
+    "senv": "./cli.mjs"
   },
   "files": [
     "cli.mjs",
