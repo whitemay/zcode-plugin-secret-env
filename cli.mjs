@@ -5,11 +5,11 @@
 //   secret-env hook zcode       ZCode PreToolUse 钩子协议壳（stdin/stdout JSON）
 // 真值只在：用户终端输入 → provider 存储 → 子进程环境。任何环节不进模型上下文。
 // 运行时中立（与 core.mjs 同规）：bin 须在 Bun/Node/pnpm 任意全局安装下可跑，不用 Bun 专属 API。
-import { appendFileSync, readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { spawnSync, spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
 const argv = process.argv;
-import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeValue, writeEnvFile, shellSingleQuote, keychainBackend, guardPaths, agentRequest, agentSocketPath, agentTokenPath, agentAuditPath, agentDir } from "./core.mjs";
+import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeValue, writeEnvFile, shellSingleQuote, keychainBackend, guardPaths } from "./core.mjs";
 
 const LOG = "/tmp/zcode-secret-env.log";
 const CONFIG_PATH = join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json");
@@ -303,66 +303,9 @@ async function cmdHookZcode() {
   allow({ ...payload.tool_input, command: newCommand });
 }
 
-
-// ---------- login/lock/status/audit：senv agent（可选 daemon，口令只驻其内存） ----------
-// login：终端隐藏输入口令 → 拉起 daemon（若未运行）→ 口令经 unix socket 写入 daemon →
-// daemon 验证（现场解密 vault 一次）后发 token（0600 文件）→ 配置里的 $keychain.password 移除。
-// 从此磁盘上没有任何能解密 vault 的东西；后续读写携 token 指纹走 daemon，全量审计。
-function updateKeychainConfig(mutate) {
-  const raw = (() => { try { return JSON.parse(readFileSync(CONFIG_PATH, "utf8")); } catch { return {}; } })();
-  raw.$keychain = mutate(raw.$keychain ?? {});
-  writeFileSync(CONFIG_PATH, JSON.stringify(raw, null, 2) + "\n", { mode: 0o600 });
-  return raw;
-}
-async function ensureDaemon() {
-  const ping = async () => { try { await agentRequest({ cmd: "status" }, 2000); return true; } catch { return false; } };
-  if (await ping()) return;
-  spawn(process.execPath, [join(import.meta.dirname, "daemon.mjs")], { detached: true, stdio: "ignore" }).unref();
-  for (let i = 0; i < 30; i++) {  // 等 daemon 起来（最多 ~3s）
-    await new Promise((r) => setTimeout(r, 100));
-    if (await ping()) return;
-  }
-  throw new Error("daemon 拉起失败（3s 内 socket 未就绪）——查看 " + agentDir() + " 下环境或手动运行 senv --daemon 看报错");
-}
-async function cmdLogin() {
-  const master = await promptHiddenValue("输入 vault master 口令（隐藏输入，回车确认）: ");
-  await ensureDaemon();
-  try {
-    await agentRequest({ cmd: "login", master }, 30000); // 验证含一次 argon2 解密，放宽超时
-  } finally {
-    master.fill?.(); // 字符串无 fill——仅为对称可读；值已随应答丢弃，进程内存不驻留
-  }
-  updateKeychainConfig(() => ({})); // 移除 password（与遗留 path）：约定路径 + daemon 模式
-  console.log("已登录：口令写入 agent（内存驻留），配置中的明文 password 已移除。token 见 " + agentTokenPath());
-  console.log("空闲 " + (Number(process.env.SENV_TTL_MINUTES) || 480) + " 分钟自动上锁；手动上锁 senv lock。");
-}
-async function cmdLock() {
-  try { await agentRequest({ cmd: "lock" }); } catch {}
-  try { unlinkSync(agentTokenPath()); } catch {}
-  console.log("已上锁：agent 内存口令与 token 均已清除。下次使用先 senv login。");
-}
-async function cmdStatus() {
-  if (!existsSync(agentSocketPath())) { console.log("agent 未运行（未登录）。"); return; }
-  try {
-    const r = await agentRequest({ cmd: "status" }, 2000);
-    console.log(r.locked ? "agent 运行中，已锁定（先 senv login）。" : "agent 运行中，已解锁。token：" + agentTokenPath());
-  } catch (e) { console.log("socket 存在但无响应：" + e.message); }
-}
-function cmdAudit(rest) {
-  const n = Number(rest.filter((a) => !a.startsWith("--"))[0] ?? 30);
-  if (!existsSync(agentAuditPath())) { console.log("(无审计记录)"); return; }
-  const lines = readFileSync(agentAuditPath(), "utf8").trimEnd().split("\n");
-  console.log(lines.slice(-Math.max(1, n)).join("\n"));
-}
-
 // ---------- 入口 ----------
 const [cmd, ...rest] = argv.slice(2);
-if (cmd === "--daemon") { await import("./daemon.mjs"); }
-else if (cmd === "login") await cmdLogin();
-else if (cmd === "lock") await cmdLock();
-else if (cmd === "status") await cmdStatus();
-else if (cmd === "audit") cmdAudit(rest);
-else if (cmd === "add") await cmdAdd(rest);
+if (cmd === "add") await cmdAdd(rest);
 else if (cmd === "remove") await cmdRemove(rest);
 else if (cmd === "list" && rest[0] === "--inject") cmdInjectList();
 else if (cmd === "list") cmdList();

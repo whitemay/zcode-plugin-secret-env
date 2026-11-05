@@ -30,7 +30,6 @@
   "files": [
     "cli.mjs",
     "run.mjs",
-    "daemon.mjs",
     "core.mjs",
     "adapters/",
     "secret-env/secrets.example.json",
