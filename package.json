@@ -41,5 +41,9 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "hash-wasm": "^4.12.0",
+    "kdbxweb": "^2.1.1"
   }
 }

@@ -14,6 +14,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // ---------- 配置（secrets.json：周知名 → {uri, aliases?}） ----------
 // 加载顺序：~/.config/secret-env/secrets.json（稳定路径，marketplace refresh 不覆盖）→ 插件根（兼容旧位）。
 // 两处合并（稳定路径优先，同名后者不覆盖前者）：凭据映射不随插件版本走——安装缓存是快照，refresh 即覆盖。
+// "$" 开头的顶层键是保留键（后端配置），不进凭据映射；当前保留键："$keychain"。
 export function loadConfig() {
   const candidates = [join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json"), join(HERE, "secret-env", "secrets.json")];
   const map = new Map(); // 别名/主键 → {canonical, uri}
@@ -21,9 +22,13 @@ export function loadConfig() {
     try {
       const raw = JSON.parse(readFileSync(path, "utf8"));
       for (const [name, def] of Object.entries(raw)) {
-        if (map.has(name)) continue;
+        if (map.has(name) || name.startsWith("$")) continue;
         map.set(name, { canonical: name, uri: def.uri, description: def.description });
         for (const a of def.aliases ?? []) if (!map.has(a)) map.set(a, { canonical: name, uri: def.uri });
+      }
+      // keychain 后端配置（稳定路径优先，只取第一处出现的）
+      if (!map.keychainBackend && raw.$keychain) {
+        map.keychainBackend = raw.$keychain; // {backend:"kdbx", path, password} — kdbx 后端；缺省走系统密钥库
       }
     } catch {}
   }
@@ -121,9 +126,71 @@ export function systemBackend() {
     };
   }
   if (platform === "win32") {
-    throw new Error("Windows 暂无 system provider 实现（Credential Manager 需 PowerShell 模块）。请改用 bitwarden provider。");
+    throw new Error("Windows 暂无 system provider 实现（Credential Manager 需 PowerShell 模块）。请改用 bitwarden provider 或配置 kdbx 后端（$keychain）。");
   }
   throw new Error(`未知平台：${platform}，无 system provider。`);
+}
+
+// ---------- kdbx 后端（keychain:// 换引擎，DESIGN §3 2026-11-05 定案） ----------
+// keychain:// 对外 URI 不变；secrets.json 配置 "$keychain": {backend:"kdbx", path, password} 时
+// 解析后端从系统 security 命令换成 kdbxweb 直读 .kdbx 库（路径 ~/ 展开，口令明文入配置是
+// 已拍板的威胁模型口径：防线=防上下文泄漏，非磁盘绝对安全）。未配置则回退 systemBackend（过渡兼容）。
+// 寻址映射：keychain://<svc> → 标题 <svc> 条目的 Password 位；/<field> → UserName（account/username）
+// 或 URL/Notes/自定义字段名。同名条目 >1 拒绝（与 macos-keychain 防歧义同规）。
+let _kdbxState = null; // {path, password, promise} — 进程内缓存（钩子进程单命令生命周期，读侧无写顾虑）
+
+async function kdbxLoad(path, password) {
+  if (_kdbxState && _kdbxState.path === path && _kdbxState.password === password) return _kdbxState.promise;
+  const promise = (async () => {
+    const ns = await import("kdbxweb");
+    const kdbxweb = ns.Kdbx ? ns : ns.default; // UMD：Bun 命名空间可用，Node 只在 default（PoC 实证）
+    if (!globalThis.__secretEnvArgon2) {
+      const hw = await import("hash-wasm");
+      kdbxweb.CryptoEngine.setArgon2Impl(async (password, salt, memory, iterations, length, parallelism, type) => {
+        const fn = type === 0 ? hw.argon2d : hw.argon2id;
+        return fn({ password: new Uint8Array(password), salt: new Uint8Array(salt), parallelism, iterations, memorySize: memory, hashLength: length, outputType: "binary" });
+      });
+      globalThis.__secretEnvArgon2 = true;
+    }
+    const expanded = path.startsWith("~") ? join(process.env.HOME ?? "~", path.slice(1)) : path;
+    const data = readFileSync(expanded);
+    return kdbxweb.Kdbx.load(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength), new kdbxweb.Credentials(kdbxweb.ProtectedValue.fromString(password)));
+  })();
+  _kdbxState = { path, password, promise };
+  return promise;
+}
+
+export async function kdbxBackend(cfg) {
+  if (!cfg?.path || !cfg?.password) throw new Error('$keychain 配置需含 path 与 password（kdbx 后端）');
+  const getText = (v) => (v instanceof Object && typeof v.getText === "function" ? v.getText() : String(v ?? ""));
+  const db = await kdbxLoad(cfg.path, cfg.password);
+  return {
+    backend: "kdbx",
+    read: async (service, field) => {
+      const hits = [...db.getDefaultGroup().allEntries()].filter((e) => e.fields.get("Title") === service);
+      if (hits.length === 0) throw new Error(`kdbx 库无标题为「${service}」的条目（${cfg.path}）`);
+      if (hits.length > 1) throw new Error(`kdbx 库存在 ${hits.length} 条同名条目「${service}」，寻址歧义——请消歧（改标题）`);
+      const e = hits[0];
+      if (!field) {
+        const pw = e.fields.get("Password");
+        if (!(pw instanceof Object && typeof pw.getText === "function")) throw new Error(`条目 ${service} 无 Password 位`);
+        return pw.getText();
+      }
+      const key = { account: "UserName", username: "UserName", url: "URL", notes: "Notes" }[field] ?? field;
+      const v = e.fields.get(key);
+      if (v === undefined) {
+        const names = [...e.fields.keys()].filter((k) => !["Title", "UserName", "Password", "URL", "Notes"].includes(k)).join("、");
+        throw new Error(`条目 ${service} 无字段「${field}」${names ? `（现有自定义字段：${names}）` : ""}`);
+      }
+      return getText(v);
+    },
+  };
+}
+
+// keychain:// 解析后端选择：配置了 kdbx 后端 → kdbx；否则按平台回退系统密钥库（过渡兼容，DESIGN §3）
+async function keychainBackend(config) {
+  if (config?.keychainBackend?.backend === "kdbx") return kdbxBackend(config.keychainBackend);
+  return systemBackend();
 }
 
 // ---------- 写侧：provider 自治写入（配置即能力，DESIGN §3） ----------
@@ -241,12 +308,13 @@ export async function resolveValue(uri, config = null) {
   const scheme = uri.split("://")[0];
   const rest = uri.slice(scheme.length + 3);
   if (scheme === "keychain") {
-    // 一般化寻址：keychain://<service>[/<field>]。一级 = 主密钥（password），二级当前只支持 account。
+    // 一般化寻址：keychain://<service>[/<field>]。一级 = 主密钥（password）；
+    // 二级语义随后端：系统密钥库 = account 属性；kdbx 后端 = username/url/notes/自定义字段。
     const parts = rest.split("/");
-    if (parts.length > 2) throw new Error(`keychain:// URI 需为 <service>[/<account>]：${uri}`);
-    const backend = systemBackend(); // 探测失败 → 人话错误，而非命令跑失败
+    if (parts.length > 2) throw new Error(`keychain:// URI 需为 <service>[/<field>]：${uri}`);
+    const backend = await keychainBackend(config); // kdbx 未配置时回退 systemBackend（探测失败 → 人话错误）
     const out = await backend.read(parts[0], parts[1]);
-    if (!out) throw new Error(`系统密钥库未取到 ${rest}`);
+    if (!out) throw new Error(`密钥库未取到 ${rest}`);
     return out;
   }
   if (scheme === "viking") {

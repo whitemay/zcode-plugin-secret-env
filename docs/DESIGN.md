@@ -70,7 +70,7 @@ AI 会话中执行需要凭据的 Bash 命令时，凭据不能经过模型上�
 - **keychain 写已闭环**（backend.write），作为统一形态的参照实现。
 - **onepassword provider（2026-11-05，待真机验证）**：`onepassword://<item>[/<field>]`，一级 = password，二级 = username/自定义字段 label（totp 显式拒绝待验证后补）。session 注入走配置记录 `OP_SESSION`（如 `keychain://op-session`）经 `--session` 传参，或无记录时依赖 biometric/宿主环境——`--session` 走 argv 有暴露面，op 的 session env 变量名带账号 shorthand 无法离线确定，真机验证时改为 env 注入。写侧与 bw 镜像（create 用 stdin 模板 JSON 待验证；edit 值落 argv 的暴露面妥协同待复核）。
 
-### kdbx 后端（keychain:// 换引擎）规划与威胁模型澄清（2026-11-05 拍板）
+### kdbx 后端（keychain:// 换引擎）——读侧已实现（2026-11-05，dev 分支）
 
 **定位先行——本项目威胁模型的边界：** secret-env 解决的是 **token 不入 agent 上下文**（对话/命令文本/环境倾泻），不是密钥的磁盘级绝对安全。secrets.json 本就以明文 token 为基线，任何安全设计评估先对照「防上下文泄漏」这个真实威胁模型，勿拔高到磁盘攻防。
 
@@ -87,6 +87,8 @@ AI 会话中执行需要凭据的 Bash 命令时，凭据不能经过模型上�
 - **库路径与 master 口令**：库路径直接写 URI、口令直接写 secrets.json 映射值（见定位第 1 条），均可 `~/` 展开。
 - **第一版只读**：token 类凭据多由服务方生成，写需求低；kdbxweb 写 API 齐全，写侧自治后续按 §「provider 写侧自治」补齐。
 - **生态现状**（2026-11-05 调研）：kdbxweb npm 2.1.1 停发于 2021（仓库 2024-12 仍有提交），但 KDBX 格式稳定、KeeWeb 背书，成熟度换确定性值得。
+
+**读侧实现与 PoC 实证（2026-11-05，dev）**：配置键 `"$keychain": {backend:"kdbx", path, password}`（`$` 开头为保留键不进凭据映射）；`keychain://` 解析分流——配置了 kdbx → kdbxBackend，未配置 → systemBackend 回退（过渡兼容）。寻址：标题→Password 位，`/account|/username`→UserName、`/url`、`/notes`、其余→自定义字段名；同名条目>1 拒绝（与 macOS 防歧义同规）；子组条目经 allEntries() 覆盖。回归 `secret-env/tests/kdbx.mjs` 11 断言（临时假库现场生成即删）bun+node 双过，既有 hook 16 断言不回归。**PoC 实证的两个集成坑**：① kdbxweb 是 UMD 包，Bun 命名空间导入可用而 Node 只在 `default` —— 导入须归一化（`ns.Kdbx ? ns : ns.default`）；② hash-wasm 对 argon2 参数类型校验严格，kdbxweb 传入的 buffer 视图须 `new Uint8Array()` 显式转换。keepassxc-cli 已核有完整写条目命令（add/edit/rm/mkdir 等，2.8 系列 man page），但其自定义字段无写入参数且引入外部二进制依赖——主线维持 kdbxweb，CLI 降为交叉验证工具。
 
 ### bitwarden:// 的两级解析（2026-11-04，0.1.1）
 
