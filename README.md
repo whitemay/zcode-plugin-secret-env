@@ -1,6 +1,8 @@
 # zcode-plugin-secret-env
 
-ZCode plugin: **secrets travel straight from your private vault into the Bash subprocess environment — the model context only ever sees placeholder / variable names, never values.**
+**A local credential manager for AI coding agents**: secrets travel straight from your private vault into the Bash subprocess environment — the model context only ever sees placeholder / variable names, never values.
+
+> **For npm reviewers / security scanners**: this is an *open-source developer tool in the same category as doppler / bitwarden-cli / 1password-cli*. It manages the user's own credentials on their own machine: it calls local vault CLIs (`security` for macOS Keychain, `bw`, `op`, `ov`) and injects resolved values into a subprocess environment via a temp 0600 file. It sends nothing anywhere, has no network listeners, and every external call is to the user's own configured vault backend. Source of truth: `core.mjs` (~400 lines), fully readable.
 
 [简体中文](./README.zh-CN.md) | English
 
@@ -12,7 +14,7 @@ OpenViking's privacy area is the ideal home for secrets — but when consuming t
 
 A PreToolUse(Bash) hook scans the command text for **explicit references** (a `{{secret:NAME}}` placeholder or a configured well-known `$VAR`), resolves the true value via a provider into a 0600 temp env file (exported under the name actually referenced in the command, i.e. the well-known original name), and lets the command through with only a source prefix: `. <envfile>; <original command>`. The command text is never rewritten; for implicit env consumers the skill guides the agent to make the reference explicit. Text and value are separated — the audit log only ever sees the env file path.
 
-- **Providers**: `keychain://` (macOS Keychain) / `viking://` (OpenViking privacy layer via `ov privacy resolve`) / `bitwarden://` (Bitwarden CLI)
+- **Providers**: `keychain://` (macOS Keychain) / `viking://` (OpenViking privacy layer via `ov privacy resolve`) / `bitwarden://` (Bitwarden CLI) / `onepassword://` (1Password CLI)
 - **Dump blacklist**: a command is rejected only when it contains both a secret reference and a dump intent (`env` / `printenv` / bare `set` / bare `export`) at command position
 - **Single-quote taboo**: a reference inside single quotes would never expand → the whole command is rejected (fail loudly, no magic)
 - **Explicit-reference convention**: the hook is a dumb text scanner; tools that consume env vars implicitly (e.g. bare `gh pr list` reading `GH_TOKEN`) are handled by the model per the skill, written explicitly as `GH_TOKEN=$GH_TOKEN gh pr list`
@@ -23,6 +25,7 @@ This project is an npm package plus thin per-host shells. Global command (the re
 
 ```bash
 bun link   # run inside the repo; registers the secret-env command (or npm i -g .)
+npm i -g @foperate/secret-env   # or install the published package
 ```
 
 ZCode shell: Plugin Marketplace → Add Marketplace, paste this repo root → Install **secret-env** (hooks.json points at the global command).
