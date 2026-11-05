@@ -1,11 +1,12 @@
 // secret-env 核心层：与宿主无关的引用扫描 / provider / env 文件 / dump 黑名单。
 // 宿主适配层（ZCode 钩子 / opencode 插件 / DSH Cordis 插件）引用本模块，
 // 只各自实现「拦截点 + 把 source 前缀写进命令」的壳。deny 为宿主注入的拒绝回调。
-import { mkdirSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync, existsSync, appendFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
+import { connect as netConnect } from "node:net";
 
 export const ENV_DIR = join(tmpdir(), "secret-env-injections");
 export const STALE_MS = 15 * 60 * 1000;
@@ -140,8 +141,8 @@ export function systemBackend() {
 let _kdbxState = null; // {path, password, promise} — 进程内缓存（钩子进程单命令生命周期）
 let _kdbxweb = null; // UMD 归一化后的命名空间，写侧建 ProtectedValue 用
 
-async function kdbxLoad(path, password) {
-  if (_kdbxState && _kdbxState.path === path && _kdbxState.password === password) return _kdbxState.promise;
+async function kdbxLoad(path, password, useCache = true) {
+  if (useCache && _kdbxState && _kdbxState.path === path && _kdbxState.password === password) return _kdbxState.promise;
   const promise = (async () => {
     const ns = await import("kdbxweb");
     const kdbxweb = ns.Kdbx ? ns : ns.default; // UMD：Bun 命名空间可用，Node 只在 default（PoC 实证）
@@ -158,15 +159,50 @@ async function kdbxLoad(path, password) {
     const data = readFileSync(expanded);
     return kdbxweb.Kdbx.load(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength), new kdbxweb.Credentials(kdbxweb.ProtectedValue.fromString(password)));
   })();
-  _kdbxState = { path, password, promise };
+  if (useCache) _kdbxState = { path, password, promise };
   return promise;
 }
 
-export async function kdbxBackend(cfg) {
+// ---------- senv agent（可选 daemon：口令只驻 daemon 内存，库每次现场加载，DESIGN §3 2026-11-05） ----------
+// 启用判据 = secrets.json $keychain 无 password 字段：有明文口令 → 内联直读（daemon 不启用）；
+// 无口令且 token 文件存在 → 全部读写经 unix socket 走 daemon（协议 newline-JSON，功能独立、可被
+// 任意语言平替实现）。token 是调用指纹：login 时构造、请求时携带、daemon 判定 + 全量审计。
+export function agentDir() { return process.env.SENV_AGENT_DIR ?? join(process.env.HOME ?? "~", ".config", "secret-env"); }
+export const agentSocketPath = () => join(agentDir(), "agent.sock");
+export const agentTokenPath = () => join(agentDir(), "agent.token");
+export const agentAuditPath = () => join(agentDir(), "audit.jsonl");
+// 库路径是约定不是配置：恒为 agentDir()/vault.kdbx。$keychain 只剩一个可选项 password
+// （有=内联直读、daemon 不启用；无/缺整个键=daemon 模式）。遗留配置里的 path 仍被尊重（过渡）。
+export const vaultPath = () => process.env.SENV_VAULT_PATH ?? join(agentDir(), "vault.kdbx");
+
+// newline-JSON 请求。返回 daemon 的应答对象；socket 不存在/超时/应答 ok:false → 抛人话错误。
+export function agentRequest(msg, timeoutMs = 15000) {
+  msg._pid = process.pid;
+  msg._exe = process.argv[1] ?? "";
+  return new Promise((resolve, reject) => {
+    const sock = netConnect(agentSocketPath());
+    let buf = "";
+    const done = (err, data) => { try { sock.destroy(); } catch {} err ? reject(err) : resolve(data); };
+    sock.setTimeout(timeoutMs, () => done(new Error("agent socket 超时")));
+    sock.on("connect", () => sock.write(JSON.stringify(msg) + "\n"));
+    sock.on("data", (d) => {
+      buf += d.toString();
+      if (!buf.endsWith("\n")) return;
+      try { const r = JSON.parse(buf); r.ok ? done(null, r) : done(new Error(r.error ?? "agent 请求失败")); }
+      catch { done(new Error(`agent 应答非法：${buf.slice(0, 120)}`)); }
+    });
+    sock.on("error", (e) => {
+      if (e.code === "ENOENT" || e.code === "ECONNREFUSED") done(new Error("agent 未运行——先执行 senv login"));
+      else done(new Error(`agent 连接失败：${e.message}`));
+    });
+  });
+}
+
+export async function kdbxBackend(cfg, { cache = true } = {}) {
   if (!cfg?.path || !cfg?.password) throw new Error('$keychain 配置需含 path 与 password（kdbx 后端）');
   const kdbxProtected = (v) => _kdbxweb.ProtectedValue.fromString(v);
   const getText = (v) => (v instanceof Object && typeof v.getText === "function" ? v.getText() : String(v ?? ""));
-  const db = await kdbxLoad(cfg.path, cfg.password);
+  const db = await kdbxLoad(cfg.path, cfg.password, cache);
   // 活条目视图：排除回收站子树（db.remove 是软删除，条目进 Recycle Bin 组，
   // 而 allEntries() 遍历子组——不过滤的话已删条目仍可被寻址命中）
   const liveEntries = () => {
@@ -239,11 +275,25 @@ export function guardPaths(config) {
   return fragments;
 }
 
-// keychain:// 后端选择：配置了 kdbx 后端 → kdbx；否则按平台回退系统密钥库（过渡兼容，DESIGN §3）。
-// 读写同构共用此分流（resolveValue 与 writeValue/remove --purge 都走它）。
+// keychain:// 后端选择（三态分流，读写同构共用）：$keychain 有明文口令 → 内联直读（daemon 不启用）；
+// 无口令且 token 文件在 → daemon 路径（口令驻 agent 内存，库每次现场加载，请求携 token 指纹）；
+// 都不是 → 人话报错提示 login 或补写 password。未配置 kdbx → 按平台回退系统密钥库（过渡兼容）。
 export async function keychainBackend(config) {
-  if (config?.keychainBackend?.backend === "kdbx") return kdbxBackend(config.keychainBackend);
-  return systemBackend();
+  const cfg = config?.keychainBackend;
+  if (!cfg) return systemBackend(); // 配置无 $keychain → 回退系统密钥库（过渡兼容）
+  const path = cfg.path ?? vaultPath(); // 约定路径优先；遗留 path 字段仍尊重（过渡）
+  if (cfg.password) return kdbxBackend({ path, password: cfg.password });
+  if (existsSync(agentTokenPath())) {
+    const token = readFileSync(agentTokenPath(), "utf8").trim();
+    const call = (cmd, extra = {}) => agentRequest({ cmd, token, ...extra });
+    return {
+      backend: "kdbx-agent",
+      read: (service, field) => call("resolve", { name: service, field }).then((r) => r.value),
+      write: (service, value, user) => call("write", { service, value, user }).then(() => {}),
+      remove: (service) => call("remove", { service }).then((r) => r.hit ?? false),
+    };
+  }
+  throw new Error("kdbx 库已配置但口令不可得（配置无明文 password 且未登录 agent）——先执行 senv login，或在 $keychain 写明文 password（daemon 模式不启用）");
 }
 
 // ---------- 写侧：provider 自治写入（配置即能力，DESIGN §3） ----------

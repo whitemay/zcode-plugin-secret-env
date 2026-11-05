@@ -70,9 +70,9 @@ await t("错误 master 口令 → InvalidKey 响亮失败", async () => {
   try { await resolveValue("keychain://github-token", Object.assign(new Map(), config, { keychainBackend: { backend: "kdbx", path: dbPath, password: "WRONG" } })); return false; }
   catch (e) { return /InvalidKey|invalid/i.test(e.message); }
 });
-await t("kdbx 后端缺配置 → 人话错误", async () => {
-  try { await resolveValue("keychain://x", Object.assign(new Map(), config, { keychainBackend: { backend: "kdbx" } })); return false; }
-  catch (e) { return e.message.includes("$keychain 配置需含 path 与 password"); }
+await t("无 password 且未登录 agent → 人话错误提示 login", async () => {
+  try { await resolveValue("keychain://x", Object.assign(new Map(), config, { keychainBackend: {} })); return false; }
+  catch (e) { return e.message.includes("口令不可得") && e.message.includes("senv login"); }
 });
 
 // ---------- 写侧自治（system provider 经 keychain 分流写库） ----------
