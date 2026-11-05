@@ -24,10 +24,12 @@
   },
   "bin": {
     "secret-env": "./cli.mjs",
-    "senv": "./cli.mjs"
+    "senv": "./cli.mjs",
+    "srun": "./run.mjs"
   },
   "files": [
     "cli.mjs",
+    "run.mjs",
     "core.mjs",
     "adapters/",
     "secret-env/secrets.example.json",

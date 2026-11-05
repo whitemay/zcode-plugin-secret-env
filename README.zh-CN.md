@@ -46,6 +46,8 @@ OPENAI_API_KEY=$OPENAI_API_KEY my-cli        # 同一句式适用于一切环境
 | 拦截点适配器 | 按宿主改写工具调用（ZCode PreToolUse 钩子 / opencode 插件 / DSH cordis 包装器） | 每宿主一次适配 | harness 自己作为 agent 跑 Bash、其命令需要注入的场景 |
 
 两级可组合：ZCode 内的 agent 以子进程调用另一 harness（凭据同样经钩子注入），在 harness 之间流转而全程不入模型上下文。
+在 agent 宿主之外（裸终端/脚本/cron），注入通道是 `srun` 命令：`srun GH_TOKEN -- gh pr list` 解析具名条目并带着它们执行命令——无 rc 文件落盘、无 shell 历史、值永不经手输。
+
 
 ## 安装
 

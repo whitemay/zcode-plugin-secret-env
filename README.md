@@ -46,6 +46,8 @@ This forms a two-tier integration spectrum:
 | Interception adapters | per-host rewrite of tool calls (ZCode PreToolUse hook / opencode plugin / DSH cordis wrapper) | one adapter per host | hosts where the *agent's own Bash commands* need injection |
 
 The two compose: an agent running inside ZCode can invoke another harness as a subprocess, and credentials flow harness-to-harness without ever entering the model context.
+Outside agent hosts entirely (bare terminal, scripts, cron), the `srun` command is the injection channel: `srun GH_TOKEN -- gh pr list` resolves the named entries and runs the command with them in its subprocess environment — no rc files, no shell history, values never typed.
+
 
 ## Install
 
