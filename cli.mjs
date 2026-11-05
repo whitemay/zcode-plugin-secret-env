@@ -7,7 +7,7 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { argv } from "bun";
-import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeValue, writeEnvFile, shellSingleQuote, keychainBackend } from "./core.mjs";
+import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeValue, writeEnvFile, shellSingleQuote, keychainBackend, guardPaths } from "./core.mjs";
 
 const LOG = "/tmp/zcode-secret-env.log";
 const CONFIG_PATH = join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json");
@@ -238,12 +238,26 @@ async function cmdHookZcode() {
   };
   const deny = (reason) => { console.error(reason); process.exit(2); };
 
-  if (payload?.tool_name !== "Bash") allow();
+  if (payload?.tool_name !== "Bash") {
+    // 非 Bash 工具（Write/Edit/Read 经 hooks.json 同一入口）：只做文件守卫，扫 file_path
+    const cfg = loadConfig();
+    const fp = payload?.tool_input?.file_path ?? "";
+    const hit = fp && guardPaths(cfg).some((f) => fp.includes(f));
+    if (hit) deny(`secret-env：${fp} 是 secret-env 的配置/密钥库文件（含 master 口令与全部凭据映射），禁止 Agent 读写。配置维护请在你的终端运行 secret-env add/remove，或亲手编辑。`);
+    allow();
+  }
   const command = payload?.tool_input?.command ?? "";
   if (!command) allow();
 
   const config = loadConfig();
   if (config.size === 0) allow(); // 未配置 = 纯旁路
+
+  // 文件守卫（Bash）：命令文本提及配置/密钥库文件即拒——这些文件含口令明文与全部映射，
+  // 且这类命令通常不含 $VAR 引用，注入扫描盯不到它们
+  const guardHit = guardPaths(config).find((f) => command.includes(f));
+  if (guardHit) {
+    deny(`secret-env：命令涉及受保护文件（片段「${guardHit}」）——secrets.json/vault.kdbx 含 master 口令明文与全部凭据映射，禁止 Agent 读写。配置维护请在你的终端运行 secret-env add/remove，或亲手编辑。`);
+  }
 
   cleanStale();
 

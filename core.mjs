@@ -225,6 +225,20 @@ export async function kdbxBackend(cfg) {
   };
 }
 
+// ---------- 文件守卫（PreToolUse 前置，与 dump 黑名单同级） ----------
+// secrets.json 有 master 口令明文与全部映射，vault.kdbx 是整库密文——两者对 agent 一律只读不可触。
+// 判定=哑文本片段匹配（宁可失败）：返回受保护路径片段列表；命中即拒绝，Agent 不碰这两个文件，
+// 配置维护走 secret-env add/remove（用户终端）或用户亲手编辑。
+export function guardPaths(config) {
+  const fragments = [".config/secret-env", join(HERE, "secret-env", "secrets.json")];
+  const vault = config?.keychainBackend?.path;
+  if (vault) {
+    const expanded = vault.startsWith("~") ? join(process.env.HOME ?? "~", vault.slice(1)) : vault;
+    fragments.push(expanded, vault); // ~/ 形态与展开形态都拦
+  }
+  return fragments;
+}
+
 // keychain:// 后端选择：配置了 kdbx 后端 → kdbx；否则按平台回退系统密钥库（过渡兼容，DESIGN §3）。
 // 读写同构共用此分流（resolveValue 与 writeValue/remove --purge 都走它）。
 export async function keychainBackend(config) {

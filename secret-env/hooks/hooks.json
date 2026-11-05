@@ -25,6 +25,18 @@
             "statusMessage": "secret-env"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|Read",
+        "hooks": [
+          {
+            "type": "process",
+            "command": "secret-env",
+            "args": ["hook", "zcode"],
+            "timeoutMs": 5000,
+            "statusMessage": "secret-env 文件守卫"
+          }
+        ]
       }
     ]
   }

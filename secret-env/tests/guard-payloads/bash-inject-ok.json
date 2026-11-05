@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"[ -n \"$BW_SESSION\" ] && echo inject-path-still-works"}}
