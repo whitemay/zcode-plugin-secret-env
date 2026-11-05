@@ -77,17 +77,21 @@ await t("kdbx 后端缺配置 → 人话错误", async () => {
 
 // ---------- 写侧自治（system provider 经 keychain 分流写库） ----------
 await t("写入：新建条目（writeValue system）", async () => {
-  await writeValue({ provider: "system", service: "new-entry", user: "u1" }, "new-pw", config);
+  await writeValue({ provider: "keychain", service: "new-entry", user: "u1" }, "new-pw", config);
   return (await resolveValue("keychain://new-entry", config)) === "new-pw"
     && (await resolveValue("keychain://new-entry/username", config)) === "u1";
 });
 await t("写入：已存在条目 upsert（值轮换，user 不给不覆盖 UserName）", async () => {
-  await writeValue({ provider: "system", service: "new-entry" }, "rotated-pw", config);
+  await writeValue({ provider: "keychain", service: "new-entry" }, "rotated-pw", config);
   return (await resolveValue("keychain://new-entry", config)) === "rotated-pw"
     && (await resolveValue("keychain://new-entry/username", config)) === "u1";
 });
+await t("写入：弃用别名 provider=system 仍可写（兼容路径）", async () => {
+  await writeValue({ provider: "system", service: "alias-compat-entry" }, "alias-pw", config);
+  return (await resolveValue("keychain://alias-compat-entry", config)) === "alias-pw";
+});
 await t("写入：同名多条 → 歧义拒绝", async () => {
-  try { await writeValue({ provider: "system", service: "dup-entry" }, "x", config); return false; }
+  try { await writeValue({ provider: "keychain", service: "dup-entry" }, "x", config); return false; }
   catch (e) { return e.message.includes("歧义"); }
 });
 await t("删除：remove 命中 + 删除未命中返回 false", async () => {
@@ -98,7 +102,7 @@ await t("删除：remove 命中 + 删除未命中返回 false", async () => {
     && !(await (async () => { try { await resolveValue("keychain://new-entry", config); return true; } catch { return false; } })());
 });
 await t("写入落盘后重开库仍可读（进程内缓存一致性）", async () => {
-  await writeValue({ provider: "system", service: "persist-entry" }, "persist-pw", config);
+  await writeValue({ provider: "keychain", service: "persist-entry" }, "persist-pw", config);
   return (await resolveValue("keychain://persist-entry", config)) === "persist-pw";
 });
 // 回退路径：无 keychainBackend → 走系统密钥库（本机 macOS 应能解析已登记的真实条目，如 bw-session）

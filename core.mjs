@@ -263,8 +263,9 @@ async function bwSessionOpts(config) {
 // spec: {provider:"system", service, user?} | {provider:"bitwarden", item, field?, user?}
 //     | {provider:"viking", parts:[category, target, field?]}. value 为明文，只经 stdin/临时文件。
 export async function writeValue(spec, value, config = null) {
-  if (spec.provider === "system") {
-    // 经 keychain 后端分流：配置 kdbx → 写库；未配置 → 系统密钥库（DESIGN §3 keychain:// 换引擎）
+  if (spec.provider === "system" || spec.provider === "keychain") {
+    // 主名 keychain（与 scheme 对齐）；system 为弃用别名。经 keychain 后端分流：
+    // 配置 kdbx → 写库；未配置 → 系统密钥库（DESIGN §3 keychain:// 换引擎）
     const backend = await keychainBackend(config);
     await backend.write(spec.service, value, spec.user);
     return;

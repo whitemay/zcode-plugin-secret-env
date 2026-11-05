@@ -76,17 +76,21 @@ function updateConfig(name, def) {
 async function cmdAdd(args) {
   const opts = parseAddArgs(args);
   if (!opts.name) {
-    console.error("用法：secret-env add -n <name> [TOKEN] [--alias A]... [--desc D] [--provider system|viking|bitwarden|onepassword ...]\n  统一流程：收值（隐藏输入或位置参数）→ provider 写入 → 登记 uri。写侧自治：bitwarden 走配置里的 BW_SESSION，onepassword 走 OP_SESSION 或 biometric，viking 走本机 ov。\n  system：--service 可选（缺省自动命名），--user 可选（keychain account 属性，缺省 = 当前系统用户）\n  bitwarden：--item <条目名> 必选；--field <字段> 二级写入（条目须已存在）；--user 写 username 位\n  onepassword：--item <条目名> 必选；--field <字段> 二级写入；--user 写 username 位（待真机验证）\n  viking：--path <category>/<target>[/<field>]；无 field 时主值落 value 字段\n  已存在条目不带 --provider 时进入维护模式（只改别名/描述），显式给 --provider 则强制重新收值");
+    console.error("用法：secret-env add -n <name> [TOKEN] [--alias A]... [--desc D] [--provider keychain|viking|bitwarden|onepassword ...]\n  统一流程：收值（隐藏输入或位置参数）→ provider 写入 → 登记 uri。写侧自治：bitwarden 走配置里的 BW_SESSION，onepassword 走 OP_SESSION 或 biometric，viking 走本机 ov。\n  keychain：--service 可选（缺省自动命名），--user 可选（account/username 位，缺省 = 当前系统用户）；配置 $keychain 时写 kdbx 库，否则系统密钥库（system 为弃用别名）\n  bitwarden：--item <条目名> 必选；--field <字段> 二级写入（条目须已存在）；--user 写 username 位\n  onepassword：--item <条目名> 必选；--field <字段> 二级写入；--user 写 username 位（待真机验证）\n  viking：--path <category>/<target>[/<field>]；无 field 时主值落 value 字段\n  已存在条目不带 --provider 时进入维护模式（只改别名/描述），显式给 --provider 则强制重新收值");
     process.exit(2);
   }
   const envName = envNameFromHuman(opts.name);
   if (!envName) { console.error(`name 归一化后为空：${opts.name}`); process.exit(2); }
-  // system 与 keychain 等价：都是本机系统密钥库；system 是显式别名——
-  // 条目已存在时用它绕过维护模式，强制重新收值入库
-  if (opts.provider === "keychain") opts.provider = "system";
+  // provider 主名 = keychain（与 keychain:// scheme 对齐——接口名跟实现走会漂移，引擎可换而接口不变）；
+  // system 是弃用别名：仍接受（向后兼容），打印迁移提示，行为完全一致。
+  // 显式 provider 名的功能意义不变：条目已存在时绕过维护模式，强制重新收值入库。
+  if (opts.provider === "system") {
+    console.error("⚠️  --provider system 已弃用，改用 --provider keychain（同一行为；system 将在后续版本移除）。本次仍按 keychain 执行。");
+    opts.provider = "keychain";
+  }
 
   const existing = JSON.parse(readFileSync(CONFIG_PATH, "utf8"))[envName];
-  if (!opts.provider && !existing) { console.error(`新条目需要 --provider（system|viking|bitwarden）`); process.exit(2); }
+  if (!opts.provider && !existing) { console.error(`新条目需要 --provider（keychain|viking|bitwarden）`); process.exit(2); }
   // 收值需要真终端；Agent 的 Bash 无 TTY，值必须由用户亲手输入（给了位置参数 token 则免交互）
   const needsPrompt = opts.provider && !opts.token;
   if (needsPrompt && !process.stdin.isTTY) {
@@ -99,7 +103,7 @@ async function cmdAdd(args) {
     // 维护模式：保留 uri 与已存的值，只改别名/描述
     uri = existing.uri;
     console.log(`维护模式：${envName} 已存在（${uri}），值不动。`);
-  } else if (opts.provider === "system") {
+  } else if (opts.provider === "keychain") {
     const service = opts.service ?? serviceFromHuman(opts.name);
     const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
     try {
@@ -148,7 +152,7 @@ async function cmdAdd(args) {
     }
     uri = `viking://${parts.join("/")}`;
   } else if (opts.user) {
-    console.error("--user 仅支持 system 与 bitwarden provider（keychain account / bw username 位）"); process.exit(2);
+    console.error("--user 仅支持 keychain 与 bitwarden provider（account/username 位）"); process.exit(2);
   } else {
     console.error(`未知 provider：${opts.provider}`); process.exit(2);
   }
