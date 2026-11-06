@@ -41,8 +41,20 @@ This forms a two-tier integration spectrum:
 | Env-var injection | explicit `$`VAR` reference in the command → hook injects into the subprocess env | zero code | every harness whose credentials come from env vars (the common convention) |
 | Interception adapters | per-host rewrite of tool calls (ZCode PreToolUse hook / opencode plugin / DSH cordis wrapper) | one adapter per host | hosts where the *agent's own Bash commands* need injection |
 
-The two compose: an agent running inside ZCode can invoke another harness as a subprocess, and credentials flow harness-to-harness without ever entering the model context.
-Outside agent hosts entirely (bare terminal, scripts, cron), the `srun` command is the injection channel: `srun GH_TOKEN -- gh pr list` resolves the named entries and runs the command with them in its subprocess environment — no rc files, no shell history, values never typed.
+The two compose: an agent running inside ZCode can invoke another harness as a subprocess, and credentials flow harness-to-harness without ever entering the model context. For a host with no adapter at all, driving it through `srun` (below) from inside the agent's Bash is the escape hatch.
+
+## srun — injection outside agent hosts
+
+Everything above happens inside an agent host. Outside one — bare terminal, ad-hoc commands, scripts, cron, launchd/systemd units — `srun` is the injection channel. It reads the same secrets file, resolves the named entries through the same providers, and execs the command with them in the subprocess environment: stdio inherited, exit code passed through, and the value appears nowhere — not on the command line, not in rc files, not in shell history.
+
+```bash
+srun GH_TOKEN -- gh pr list            # resolve one entry and run
+srun GH_TOKEN BW_SESSION -- ./deploy.sh  # several entries at once
+srun DEEPSEEK_API_KEY -- pi            # launch an agent host with its key in env
+srun --all -- ./legacy-tool.sh         # inject every configured entry (exists for the cases that genuinely need the full set)
+```
+
+The named form is the default and recommended one. For long-running services, `srun` works as the unit's entry point (e.g. systemd `ExecStart=/usr/local/bin/srun BW_SESSION -- my-service`), so plaintext never appears in the unit file either.
 
 
 ## Install
@@ -102,3 +114,7 @@ See [secret-env/secrets.example.json](./secret-env/secrets.example.json) for the
 - The `viking://` provider requires the `ov` CLI (≥0.5.1) and a local OpenViking service
 
 Design history and mechanism verification records: [docs/DESIGN.md](./docs/DESIGN.md) (Chinese).
+
+## Feedback
+
+Suggestions on the design or implementation are welcome — please open a [GitHub issue](https://github.com/whitemay/zcode-plugin-secret-env/issues) (Gitee users may use [Gitee issues](https://gitee.com/whitemay/zcode-plugin-secret-env/issues); the two do not sync).

@@ -41,8 +41,20 @@ OPENAI_API_KEY=$OPENAI_API_KEY my-cli        # 同一句式适用于一切环境
 | 环境变量注入 | 命令中显式 `$`VAR` 引用 → 钩子注入子进程环境 | 零代码 | 一切「凭据走环境变量」的 harness（生态惯例） |
 | 拦截点适配器 | 按宿主改写工具调用（ZCode PreToolUse 钩子 / opencode 插件 / DSH cordis 包装器） | 每宿主一次适配 | harness 自己作为 agent 跑 Bash、其命令需要注入的场景 |
 
-两级可组合：ZCode 内的 agent 以子进程调用另一 harness（凭据同样经钩子注入），在 harness 之间流转而全程不入模型上下文。
-在 agent 宿主之外（裸终端/脚本/cron），注入通道是 `srun` 命令：`srun GH_TOKEN -- gh pr list` 解析具名条目并带着它们执行命令——无 rc 文件落盘、无 shell 历史、值永不经手输。
+两级可组合：ZCode 内的 agent 以子进程调用另一 harness（凭据同样经钩子注入），在 harness 之间流转而全程不入模型上下文。完全没有适配器的宿主，也可以在 agent 的 Bash 里走 `srun`（见下节）兜底。
+
+## srun — agent 宿主之外的注入通道
+
+以上都发生在 agent 宿主之内。宿主之外——裸终端、临时命令、脚本、cron、launchd/systemd 服务——注入通道是 `srun` 命令。它读同一份配置，经同样的 provider 解析具名条目，带着它们 exec 目标命令：stdio 继承、退出码透传，值不出现在任何地方——不在命令行上、不在 rc 文件里、不在 shell 历史里。
+
+```bash
+srun GH_TOKEN -- gh pr list              # 解析单条并执行
+srun GH_TOKEN BW_SESSION -- ./deploy.sh  # 一次注入多条
+srun DEEPSEEK_API_KEY -- pi              # 带着密钥环境启动一个 agent 宿主
+srun --all -- ./legacy-tool.sh           # 注入全部已配置条目（供确实需要全量的场景）
+```
+
+具名形式是默认也是推荐用法。常驻服务可用它作启动入口（如 systemd `ExecStart=/usr/local/bin/srun BW_SESSION -- my-service`），服务定义文件里同样不落明文。
 
 
 ## 安装
@@ -102,3 +114,7 @@ secret-env list
 - viking:// provider 依赖 `ov` CLI（≥0.5.1）与本地 OpenViking 服务
 
 设计沿革与机制验证记录见 [docs/DESIGN.md](./docs/DESIGN.md)。
+
+## 反馈
+
+对本项目设计或实现方案有建议，欢迎提 [GitHub issue](https://github.com/whitemay/zcode-plugin-secret-env/issues)（Gitee 用户也可用 [Gitee issues](https://gitee.com/whitemay/zcode-plugin-secret-env/issues)，两边不互通）。
