@@ -84,7 +84,7 @@ DSH（DeepSeek Harness）bundle：安装到当前 profile（`plugin_manager inst
    ```
 3. 重启 DSH——Host 插件代码在启动时加载，安装/替换后都需要重启。
 
-验证：新会话出现 `add_secret` 工具，系统提示出现已配置密钥清单（无真值）。更新：改 `adapters/dsh/secret-env/` 后重启 DSH；skill 是 symlink，改动热加载。卸载：`plugin_manager remove_bundle`（`@local/secret-env`）后删除 `~/.dsh/skills/secret-env`。
+验证：新会话出现 `add_secret` 工具，系统提示出现已配置密钥清单（无真值）。更新：改 `adapters/dsh/secret-env/` 后重启 DSH；skill 是 symlink，改动热加载。卸载：`plugin_manager remove_bundle`（`@local/secret-env`）后删除 `~/.dsh/skills/secret-env`。给 agent 逐步执行的版本见 [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md)。
 
 会话内登记（所有宿主）：agent 先通过问答与用户终审元数据——环境变量名及别名（从上下文推断 well-known 候选，或按 `KEY, alias1, alias2` 格式自定义）、可选描述、provider——然后给出一条完整的 `senv add` 命令由你在自己终端执行（隐藏输入，值不经对话）。这条终端通道是通用基线，任何宿主都可用。
 
