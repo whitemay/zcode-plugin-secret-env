@@ -59,32 +59,47 @@ srun --all -- ./legacy-tool.sh           # 注入全部已配置条目（供确�
 
 ## 安装
 
-本项目是 npm 包 + 各宿主薄壳。全局命令（真身）：
+本项目是 npm 包 + 各宿主薄壳。**按宿主分别安装：ZCode 与 DSH 只需主包，opencode 另需自己的插件包。**
+
+全局命令（真身）。**ZCode 必须装**——它的 hooks 直接调用裸命令 `secret-env` / `senv-mcp`；opencode 与 DSH 通过各自的依赖安装取得副本并以绝对路径解析，不依赖 `PATH` 上有该命令：
 
 ```bash
-bun link   # 仓库内执行，注册 secret-env 与 senv 双命令名（同一 CLI，短别名）（或 npm i -g .）
-npm i -g @foperate/secret-env   # 或安装已发布的 npm 包
+npm i -g @foperate/secret-env   # 或在仓库内 bun link，注册 secret-env 与 senv 双命令名（同一 CLI，短别名）
 ```
 
-ZCode 壳：Plugin Marketplace → Add Marketplace 粘贴本仓库根 → Install **secret-env**（hooks.json 指向全局命令）。
+ZCode 壳：Plugin Marketplace → Add Marketplace 粘贴本仓库根 → Install **secret-env**。只需主包——marketplace 安装的是壳的声明文件（hooks.json、plugin.json、skills），**不执行任何包管理器**，所以不会带来 `secret-env` 命令。其 hooks 调用裸命令 `secret-env` 与 `senv-mcp`，靠 `PATH` 解析；没有上面的全局安装，插件能装上但所有 hook 全部失败。**先装全局命令，再装插件。**
 
-opencode 壳：把适配器复制进插件目录（V2 API，`tool.execute.before` 改写 `output.args.command` 加同一 source 前缀）：
+opencode 壳（V2）：以**独立包** `@foperate/secret-env-opencode` 分发，需与主包**一起全局安装**（注入钩子、`senv-mcp` MCP 与 skill 均由该插件提供）：
 
 ```bash
-cp adapters/opencode.ts ~/.config/opencode/plugins/secret-env.ts   # 或项目级 .opencode/plugins/
+bun install -g @foperate/secret-env @foperate/secret-env-opencode
 ```
 
-DSH（DeepSeek Harness）bundle：安装到当前 profile（`plugin_manager install_bundle`），由 Host 插件提供 bash 注入、文件/通道守卫、密钥清单注入与 `add_secret` 工具：
+```jsonc
+// ~/.config/opencode/opencode.json（或项目 opencode.json）
+{ "plugin": ["@foperate/secret-env-opencode"] }
+```
+
+两条约束决定了这个装法：
+
+- **`plugin` 数组只认包名。** opencode 拒绝 `@scope/pkg/subpath` 形式的 spec——`npa` 解析出子路径后不再算 registry 的 version/range/tag，opencode 转而去 npm 装一个假路径（`/Users/<你>/@scope/pkg/subpath/package.json`，报 `NpmInstallFailedError`）。子路径 exports 仍可用于程序化 `import`，但不适用于这个配置键。
+- **两个包都要全局装。** 插件把主包声明为依赖，装插件会连带装上主包——但作为传递依赖安装时，其 `bin` 不会链进 `~/.bun/bin` 或 `~/.npm/bin`，导致 `senv` / `senv-mcp` 不在 `PATH` 上。两个都装在顶层才会建立链接。
+
+适配器通过 `createRequire` 解析主包绝对路径（core、`senv-mcp`、skill 资产），不依赖 `PATH`。本地开发：仓库根 `bun install` 建立 workspace 链接，再把 `plugin` 数组指向适配器目录。
+
+注意宿主**不会**自动发现插件包内的 `skills/` 目录——skill 由适配器经 `ctx.skill.transform` 从主包读取 `SKILL.md` 程序化注册；删插件即连带 skill 与 MCP 一起消失。
+
+DSH（DeepSeek Harness）bundle：**主包本身就是 DSH bundle**（根 `package.json` 的 `dsh.bundle.patch` 指向适配器 patch），**不需要独立的插件包**——这点与 opencode 不同，DSH 只装主包。Host 插件提供 bash 注入、文件/通道守卫、密钥清单注入与 `add_secret` 工具：
 
 1. 安装 Host 插件——可在 DSH 内让 agent 按本段执行（每次 `plugin_manager` 调用会请求一次完整文件权限审批）：
-   `plugin_manager` → `action: install_bundle`，`target` = 本仓库 `adapters/dsh/secret-env` 的绝对路径。成功后 profile 的 `package.json` 依赖与 `dsh.profile.bundles` 会记录它。
+   `plugin_manager` → `action: install_bundle`，`target` = `@foperate/secret-env@0.3.1`（已发布的包）或本仓库根目录的绝对路径（本地开发）。成功后 profile 的 `package.json` 依赖与 `dsh.profile.bundles` 会记录 `@foperate/secret-env`。
 2. 安装 skill（模型据此知道 secret-env 约定）：
    ```bash
-   ln -sfn "$PWD/secret-env/skills/secret-env" ~/.dsh/skills/secret-env
+   ln -sfn "$PWD/skills/secret-env" ~/.dsh/skills/secret-env
    ```
 3. 重启 DSH——Host 插件代码在启动时加载，安装/替换后都需要重启。
 
-验证：新会话出现 `add_secret` 工具，系统提示出现已配置密钥清单（无真值）。更新：改 `adapters/dsh/secret-env/` 后重启 DSH；skill 是 symlink，改动热加载。卸载：`plugin_manager remove_bundle`（`@local/secret-env`）后删除 `~/.dsh/skills/secret-env`。给 agent 逐步执行的版本见 [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md)。
+验证：新会话出现 `add_secret` 工具，系统提示出现已配置密钥清单（无真值）。更新：升级主包（或改 `adapters/dsh/` 后）重启 DSH；skill 是 symlink，改动热加载。卸载：`plugin_manager remove_bundle`（`@foperate/secret-env`）后删除 `~/.dsh/skills/secret-env`。给 agent 逐步执行的版本见 [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md)。
 
 会话内登记（所有宿主）：agent 先通过问答与用户终审元数据——环境变量名及别名（从上下文推断 well-known 候选，或按 `KEY, alias1, alias2` 格式自定义）、可选描述、provider——然后给出一条完整的 `senv add` 命令由你在自己终端执行（隐藏输入，值不经对话）。这条终端通道是通用基线，任何宿主都可用。
 
@@ -93,6 +108,7 @@ DSH（DeepSeek Harness）bundle：安装到当前 profile（`plugin_manager inst
 | 宿主 | 通道 | 详情 |
 | --- | --- | --- |
 | ZCode | 插件自带：`senv-mcp`（MCP elicitation），安装即自动注册 | skill `references/zcode.md` |
+| opencode | 由 `@foperate/secret-env-opencode` 提供：`senv-mcp`（MCP elicitation），经 `ctx.mcp.transform` 注册 | skill `references/opencode.md` |
 | DSH | DSH 适配器自带：`add_secret` 工具（宿主问答卡片） | skill `references/dsh.md` |
 
 无论哪条通道，密钥值都不进入模型上下文，返回给 agent 的结果永远脱敏（不含密钥值）。
@@ -115,7 +131,7 @@ secret-env list
 }
 ```
 
-模板见 [secret-env/secrets.example.json](./secret-env/secrets.example.json)。配置为空时钩子纯旁路。
+模板见 [adapters/zcode/secrets.example.json](./adapters/zcode/secrets.example.json)。配置为空时钩子纯旁路。
 
 ## 已知边界（诚实声明）
 

@@ -88,7 +88,7 @@ AI 会话中执行需要凭据的 Bash 命令时，凭据不能经过模型上�
 - **第一版只读**：token 类凭据多由服务方生成，写需求低；kdbxweb 写 API 齐全，写侧自治后续按 §「provider 写侧自治」补齐。
 - **生态现状**（2026-11-05 调研）：kdbxweb npm 2.1.1 停发于 2021（仓库 2024-12 仍有提交），但 KDBX 格式稳定、KeeWeb 背书，成熟度换确定性值得。
 
-**读侧实现与 PoC 实证（2026-11-05，dev）**：配置键 `"$keychain": {backend:"kdbx", path, password}`（`$` 开头为保留键不进凭据映射）；`keychain://` 解析分流——配置了 kdbx → kdbxBackend，未配置 → systemBackend 回退（过渡兼容）。寻址：标题→Password 位，`/account|/username`→UserName、`/url`、`/notes`、其余→自定义字段名；同名条目>1 拒绝（与 macOS 防歧义同规）；子组条目经 allEntries() 覆盖。回归 `secret-env/tests/kdbx.mjs` 16 断言（临时假库现场生成即删）bun+node 双过，既有 hook 16 断言不回归，真实库端到端过。**写侧已落地**：system provider 三处（writeValue/add/remove --purge）经 keychainBackend 分流，写语义镜像 bw（同名条目存在→改 Password 位，不存在→建条目，同名>1→歧义拒绝），改后即落盘 0600。**软删除坑（实测发现）**：kdbxweb `db.remove()` 把条目移进 Recycle Bin 组而 `allEntries()` 遍历子组——已删条目仍可被寻址命中；且 KdbxEntry 无 `group` 属性。修法=寻址统一走 `liveEntries()`（遍历分组树跳过回收站分支）。**PoC 实证的两个集成坑**：① kdbxweb 是 UMD 包，Bun 命名空间导入可用而 Node 只在 `default` —— 导入须归一化（`ns.Kdbx ? ns : ns.default`）；② hash-wasm 对 argon2 参数类型校验严格，kdbxweb 传入的 buffer 视图须 `new Uint8Array()` 显式转换。**daemon 方案评估后否决（2026-11-05，已实现一版后回退）**：曾实现 senv login → 常驻 agent（口令驻内存、token 调用指纹、全量审计、TTL 上锁），评估后取消。否决理由：脚本形态下进程身份核验不可达——macOS 内核只背书签名身份（keychain ACL 与他进程 argv 读取 root-only 是同源限制：无签名进程无稳定身份，一切退化为 root/同进程）；Linux /proc 开放但 Node 无 SO_PEERCRED，连接↔pid 无内核绑定（自报 pid 可代理绕过），cmdline 匹配亦不证明行为完好（NODE_OPTIONS 注入）。token=同 UID 可读的共享秘密，审计=自报线索非硬证据。强度结论（脚本形态三级表）：自报（弱）→ 路径核验（需二进制编译）→ 签名（macOS 唯一真核验，需 Developer ID）。方案净增益不抵常驻进程复杂度，维持「明文 password 入 $keychain + 防上下文泄漏」口径；未来做二进制编译时路径核验方案可重启。**保留的简化**：库路径改约定（~/.config/secret-env/vault.kdbx，SENV_VAULT_PATH 仅供测试重定向），$keychain 只剩 password 一项。
+**读侧实现与 PoC 实证（2026-11-05，dev）**：配置键 `"$keychain": {backend:"kdbx", path, password}`（`$` 开头为保留键不进凭据映射）；`keychain://` 解析分流——配置了 kdbx → kdbxBackend，未配置 → systemBackend 回退（过渡兼容）。寻址：标题→Password 位，`/account|/username`→UserName、`/url`、`/notes`、其余→自定义字段名；同名条目>1 拒绝（与 macOS 防歧义同规）；子组条目经 allEntries() 覆盖。回归 `adapters/zcode/tests/kdbx.mjs` 16 断言（临时假库现场生成即删）bun+node 双过，既有 hook 16 断言不回归，真实库端到端过。**写侧已落地**：system provider 三处（writeValue/add/remove --purge）经 keychainBackend 分流，写语义镜像 bw（同名条目存在→改 Password 位，不存在→建条目，同名>1→歧义拒绝），改后即落盘 0600。**软删除坑（实测发现）**：kdbxweb `db.remove()` 把条目移进 Recycle Bin 组而 `allEntries()` 遍历子组——已删条目仍可被寻址命中；且 KdbxEntry 无 `group` 属性。修法=寻址统一走 `liveEntries()`（遍历分组树跳过回收站分支）。**PoC 实证的两个集成坑**：① kdbxweb 是 UMD 包，Bun 命名空间导入可用而 Node 只在 `default` —— 导入须归一化（`ns.Kdbx ? ns : ns.default`）；② hash-wasm 对 argon2 参数类型校验严格，kdbxweb 传入的 buffer 视图须 `new Uint8Array()` 显式转换。**daemon 方案评估后否决（2026-11-05，已实现一版后回退）**：曾实现 senv login → 常驻 agent（口令驻内存、token 调用指纹、全量审计、TTL 上锁），评估后取消。否决理由：脚本形态下进程身份核验不可达——macOS 内核只背书签名身份（keychain ACL 与他进程 argv 读取 root-only 是同源限制：无签名进程无稳定身份，一切退化为 root/同进程）；Linux /proc 开放但 Node 无 SO_PEERCRED，连接↔pid 无内核绑定（自报 pid 可代理绕过），cmdline 匹配亦不证明行为完好（NODE_OPTIONS 注入）。token=同 UID 可读的共享秘密，审计=自报线索非硬证据。强度结论（脚本形态三级表）：自报（弱）→ 路径核验（需二进制编译）→ 签名（macOS 唯一真核验，需 Developer ID）。方案净增益不抵常驻进程复杂度，维持「明文 password 入 $keychain + 防上下文泄漏」口径；未来做二进制编译时路径核验方案可重启。**保留的简化**：库路径改约定（~/.config/secret-env/vault.kdbx，SENV_VAULT_PATH 仅供测试重定向），$keychain 只剩 password 一项。
 provider 选项主名已改 keychain（2026-11-05）：与 scheme 对齐，「system」的平台路由动机随 kdbx 后端消失，system 降级为弃用别名（打印提示、行为一致）。keepassxc-cli 已核有完整写条目命令（add/edit/rm/mkdir 等，2.8 系列 man page），但其自定义字段无写入参数且引入外部二进制依赖——主线维持 kdbxweb，CLI 降为交叉验证工具。
 
 ### bitwarden:// 的两级解析（2026-11-04，0.1.1）
@@ -169,3 +169,23 @@ ZCode 已知宿主形态（无 password 掩码），故**不做运行时能力�
 - **entry.mjs（根，宿主无关）**：PROVIDERS/buildEntryOpts/entryCommandText 三端共用；cli.mjs storeEntry 仍是落库唯一真源。DSH 插件内的 entry.mjs 只放宿主专属文案与卡片答案解释（custom/selected 语义），re-export 共用层。
 - **曾议方案存档**：① senv-mcp 加第二个 tool（store_secret，capability 门控按 client 是否声明 elicitation 区分）专供 DSH 程序化调用——可行，但 DSH 侧要多养一个 node 子进程（PATH/运行时坑有前科）且隔离增益为零（值本就在插件进程），弃；② DSH wrapper 拦截 `senv add` 命令文本升级为卡片——触发物可与兜底统一，但命令文本解析脆，改为插件注册独立 add_secret 工具（结构化入参），已实现。
 - **MCP 定位**：MCP（elicitation）只是 ZCode 的实现通道，不是项目级能力——README 按「会话内登记」能力书写，MCP 降为宿主集成细节；设计论证留本节。
+
+## 11. 分发：主包兼任 DSH bundle（2026-11-06 定案，0.3.0 落地）
+
+0.3.0 起 DSH 不再有独立插件包：根 `package.json` 声明 `dsh.bundle.patch` 指向 `adapters/dsh/cordis.patch.yml`，patch 的 insert name 为 `@foperate/secret-env/dsh`（由根 `exports` 暴露），`plugin_manager install_bundle` 的 target 直接是主包（npm spec 或本地仓库根）。
+
+理由：插件是主包的宿主适配层——注入与入库都直接 import 主包代码，终端兜底命令也假定 `senv` 存在；拆独立包只会多一次版本同步，不减少任何前置。主包被 pnpm 安装为真实副本（本地开发为 link），同时规避了「link 模式下插件从真实路径解析不到 profile 依赖」的坑（该坑曾导致 `add_secret` 静默不注册）。
+
+代价与边界：DSH profile 会安装整个 CLI 包（含 bin 与 kdbx 依赖），可接受——主包本来就是前置。ZCode 仍走仓库/本地 marketplace（marketplace 不认 npm spec）；opencode 走独立插件包（见第 12 节）；三端版本由发布流程保证一致（主包与插件包同版本号，插件包对主包用 `workspace:*`，bun pack 时自动转为实际版本）。
+
+## 12. 分发：opencode 独立插件包（2026-11-06 定案，0.3.1 落地）
+
+opencode 的 `plugin` 数组只接受 registry 包名（可带 version/range/tag）、git spec、本地路径三类 spec。实测（反编译 2.2.5 二进制，`D(f)` 函数）：`npa("@foperate/secret-env/opencode")` 解析出子路径后，`type` 不再属于 `version/range/tag`，函数返回 `undefined`，后续 add 分支直接打 npm 安装一个假路径（`/Users/<user>/@foperate/secret-env/opencode/package.json`），报 `NpmInstallFailedError`。因此**子路径 exports 只对程序化 `import` 有效，对 `plugin` 配置键无效**。
+
+结论：opencode 适配器拆为独立包 `@foperate/secret-env-opencode`，物理位置仍是 `adapters/opencode/`（npm workspace 成员，目录即包边界，不搬目录）。
+
+依赖与安装：插件包 `dependencies` 声明 `@foperate/secret-env: "workspace:*"`，用户需**同时全局安装两个包**（`bun install -g @foperate/secret-env @foperate/secret-env-opencode`）。只装插件包时主包虽会被连带装上，但作为传递依赖其 `bin` 不进 `~/.bun/bin` / `~/.npm/bin`，`senv` / `senv-mcp` 不在 `PATH` 上。
+
+跨包引用：适配器对主包的 core 与 `mcp.mjs` 走 `createRequire` 绝对解析，MCP 命令用单元素绝对路径（`[process.execPath, <mcp.mjs>]` 会让 opencode 把首个参数当 cwd 去 chdir，报 ENOTDIR），不依赖 `PATH`。**skill 不做跨包引用**：插件包自带副本 `adapters/opencode/skills/secret-env/`（随 npm 包发布），由 `tests/skill-sync.mjs` 与权威副本逐字节校验。
+
+与 DSH 的不对称是宿主机制决定的：DSH 的 `dsh.bundle.patch` 必须留在主包，无法拆分；opencode 则因 spec 限制必须独立成包。

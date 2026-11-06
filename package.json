@@ -1,6 +1,6 @@
 {
   "name": "@foperate/secret-env",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "密钥从私有库直达 Bash 子进程环境，模型上下文永不见值。全局 CLI + 多宿主适配（ZCode / opencode / DSH）。",
   "type": "module",
   "keywords": [
@@ -27,24 +27,46 @@
     "srun": "./run.mjs",
     "senv-mcp": "./mcp.mjs"
   },
+  "workspaces": [
+    "adapters/opencode"
+  ],
+  "exports": {
+    "./core.mjs": "./core.mjs",
+    "./cli.mjs": "./cli.mjs",
+    "./entry.mjs": "./entry.mjs",
+    "./mcp.mjs": "./mcp.mjs",
+    "./run.mjs": "./run.mjs",
+    "./dsh": "./adapters/dsh/index.js",
+    "./package.json": "./package.json"
+  },
   "files": [
-    "!adapters/tests/",
     "README.md",
     "README.zh-CN.md",
-    "adapters/",
+    "adapters/dsh/",
+    "adapters/zcode/secrets.example.json",
+    "skills/",
     "cli.mjs",
     "core.mjs",
+    "docs/INSTALL-DSH.md",
     "entry.mjs",
     "mcp.mjs",
-    "run.mjs",
-    "secret-env/secrets.example.json"
+    "run.mjs"
   ],
   "scripts": {
-    "test": "bun secret-env/tests/hook.mjs",
-    "test:dsh": "bun adapters/tests/dsh-guard.mjs"
+    "test": "bun adapters/zcode/tests/hook.mjs",
+    "test:dsh": "bun tests/dsh-guard.mjs",
+    "test:opencode": "bun tests/opencode.mjs",
+    "test:skill-sync": "bun tests/skill-sync.mjs",
+    "skill:sync": "bun tests/skill-sync-copy.mjs",
+    "test:all": "bun tests/skill-sync.mjs && bun adapters/zcode/tests/hook.mjs && bun tests/dsh-guard.mjs && bun tests/opencode.mjs"
   },
   "engines": {
     "node": ">=18"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./adapters/dsh/cordis.patch.yml"
+    }
   },
   "dependencies": {
     "hash-wasm": "^4.12.0",
