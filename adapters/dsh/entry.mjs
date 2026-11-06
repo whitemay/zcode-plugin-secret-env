@@ -1,6 +1,7 @@
-// DSH 登记条目的纯逻辑：消息/选项文案与答案解释（参数/命令构造已收敛到仓库根 entry.mjs，三端共用）。
-import { PROVIDERS, buildEntryOpts, entryCommandText } from "../../entry.mjs";
-export { PROVIDERS, buildEntryOpts, entryCommandText };
+// DSH 登记条目的纯逻辑：消息/选项文案与答案解释。
+// 条目构造与终端兜底命令已下沉到 CLI 协议（store 的 ready / command 形态），本文件不 import 主包代码。
+// PROVIDERS 只用于文案与工具 schema 兜底：权威列表来自 info.providers（协议）。
+export const PROVIDERS = ["keychain", "bitwarden", "viking", "onepassword"];
 
 const lang = (() => {
   const l = process.env.LC_ALL ?? process.env.LANG ?? "";

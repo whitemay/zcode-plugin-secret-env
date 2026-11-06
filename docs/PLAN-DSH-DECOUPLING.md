@@ -7,7 +7,8 @@
 ## 进度
 
 - **阶段 1 已完成（2026-11-06）**：`core.mjs` 加 `PROTOCOL_VERSION` / `configPaths()`；`cli.mjs` 抽 `buildInjection()`（hook zcode 与 inject 共用）并新增 `info` / `inject` / `store` 三命令；`tests/cli-protocol.mjs` 41 项通过；`test:all` 已纳入（`bun run test:protocol` 可单独跑）。
-- 阶段 2（适配器改协议客户端）未开工。
+- **阶段 2 已完成（2026-11-06）**：新增 `adapters/dsh/client.mjs`（协议客户端，`$SENV_BIN` → PATH，超时/退出码/非 JSON 均转 `CliError`）与 `rules.mjs`（`scanRefs` 副本 + `matchGuardPaths`）；`guards.mjs` 改吃 info 快照；`index.js` 去掉主包 import，启动同步握手、guard 同步判定、注入/入库走子进程；测试：`dsh-guard.mjs`（18 项 + 装配/假客户端）、`dsh-protocol.mjs`（假 CLI 六类错误）、`rules-sync.mjs`（11 fixtures 与 core 行为全等）。`grep` 确认适配器无跨包相对 import。
+- 阶段 3（拆薄包）未开工；**尚未发版**：npm 上的 0.3.1 不含协议命令，阶段 2 的插件需主包发布后才可安装使用（本地开发用 `bun link`）。
 
 ## 0. 为什么 guard 不能外置
 
@@ -41,9 +42,11 @@ secret-env inject                          # stdin: { protocol, command, session
   → { error: "reason" }                                     # exit 2（单引号/倾泄/解析失败/占位符未配置）
   → { error: "protocol mismatch" }                          # exit 3
 
-secret-env store                           # stdin: { protocol, name, provider, detail, alias, description, value }
-  → { status: "stored", envName, uri }                       # exit 0
-  → { status: "invalid"|"error", message }                   # exit 2
+secret-env store                           # stdin: { protocol, name, provider, detail, alias, description[, value] }
+  → { status: "ready", envName }                             # 无 value：只校验（判重/归一化），不入库
+  → { status: "command", command }                           # commandOnly: true：只要终端兜底命令
+  → { status: "stored", envName, uri }                       # 有 value：入库（值只经 stdin）
+  → { status: "invalid"|"error", code, message }             # exit 2（exists / unknown-provider / missing-name / empty-value …）
 ```
 
 约束：
