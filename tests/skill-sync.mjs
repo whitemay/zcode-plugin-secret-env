@@ -57,4 +57,11 @@ for (const [host, dir] of Object.entries(COPIES)) {
 }
 
 if (failed === 0) console.log(`✓ skill 副本一致（${canonFiles.length} 个文件）`);
+
+// 发布形态：权威位只留在仓库里做同步源，不随主包发布（skill 由各宿主包分发）
+const rootPkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+const shipped = (rootPkg.files ?? []).map((f) => f.replace(/\/$/, ""));
+if (shipped.includes("skills")) fail("主包 package.json 的 files 不应包含 skills/（权威位仅仓库内同步源）");
+else console.log("✓ 主包发布内容不含 skills/（权威位仅仓库内同步源）");
+
 process.exit(failed ? 1 : 0);

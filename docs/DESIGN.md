@@ -194,6 +194,8 @@ opencode 的 `plugin` 数组只接受 registry 包名（可带 version/range/tag
 
 `adapters/dsh/` 成为独立 npm 包 `@foperate/secret-env-dsh`（零依赖）：自带 `package.json`（`dsh.bundle.patch: ./cordis.patch.yml`，patch insert name = 包名）、自带 skill 副本 `skills/secret-env/`、自带 locale/icon。主包不再声明 `dsh.bundle`、不再导出 `./dsh`、`files` 不再包含 `adapters/dsh/`。安装 = **全局 CLI（主包）+ bundle 包**：`bun add -g @foperate/secret-env` + `plugin_manager install_bundle @foperate/secret-env-dsh@<ver>`；skill 的 `~/.dsh/skills/secret-env` 指向已安装 bundle 包内的副本。
 
+主包的 `skills/secret-env/` **保留在仓库里但不随主包发布**（`files` 已移除）：它只作为三份宿主副本的逐字节同步源（`bun run skill:sync` + `tests/skill-sync.mjs`），skill 的实际分发由各宿主包负责（ZCode 安装单元 / opencode 插件包 / DSH bundle 包）。`tests/skill-sync.mjs` 会断言主包 `files` 不含 `skills`，防止把只用于仓库内同步的目录又带回 npm 包。
+
 为何推翻第 11 节：第 11 节的结论建立在「插件直接 import 主包代码」之上——那种耦合使拆分只增加版本同步成本、不减少前置。适配器协议化（`docs/PLAN-DSH-DECOUPLING.md`）后这两条都变了：
 
 - **命令守卫下沉 CLI**：`inject` 内置受保护路径守卫与注入，DSH 本地只需同步回调能做的部分（文件工具、pwsh/terminal_send）；`info` 提供清单与 guardPaths 快照。适配器不再 import `core.mjs`/`cli.mjs`/`entry.mjs`。

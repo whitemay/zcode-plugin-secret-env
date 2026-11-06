@@ -42,7 +42,6 @@
     "README.md",
     "README.zh-CN.md",
     "adapters/zcode/secrets.example.json",
-    "skills/",
     "cli.mjs",
     "core.mjs",
     "docs/INSTALL-DSH.md",
