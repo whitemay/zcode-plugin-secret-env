@@ -4,9 +4,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-06
+
 ### Added
 
-- **opencode adapter distributed with the main package**: `adapters/opencode/index.ts` exposed via package exports `"./opencode"`; the host config `plugin` array references `"@foperate/secret-env/opencode"` (no `cp`). The adapter now also registers `senv-mcp` (`ctx.mcp.transform`) and the skill (`ctx.skill.transform`, reading the packaged `secret-env/skills/secret-env/SKILL.md` — the host does not auto-discover a plugin package's own `skills/` directory). Skill gains `references/opencode.md`.
+- **opencode plugin split into its own package** `@foperate/secret-env-opencode` (workspace member at `adapters/opencode`, npm workspace `workspace:*` dependency on the main package). The host config `plugin` array references the package name `"@foperate/secret-env-opencode"`. opencode rejects `@scope/pkg/subpath` specs: `npa` parses the subpath, the spec stops classifying as a registry version/range/tag, and opencode tries an npm install of a bogus path and fails with `NpmInstallFailedError` — so the previous `"@foperate/secret-env/opencode"` form could never load. Users install both packages globally (`bun install -g @foperate/secret-env @foperate/secret-env-opencode`): a transitively installed dependency's `bin` entries are not linked into `~/.bun/bin` / `~/.npm/bin`.
+- The adapter now registers the MCP server and the skill: `senv-mcp` via `ctx.mcp.transform`, the skill via `ctx.skill.transform` reading `secret-env/skills/secret-env/SKILL.md` from the main package (the host does not auto-discover a plugin package's own `skills/` directory). Skill gains `references/opencode.md`.
+
+### Changed
+
+- Adapter cross-package references resolve through `createRequire` absolute paths instead of relative paths and `PATH`: core and `senv-mcp` (`require.resolve`) and the skill asset (anchored at the main package root). The MCP command is `[process.execPath, <resolved mcp.mjs>]` rather than a bare `senv-mcp`, so it works when the main package's `bin` is not on `PATH`. The `$HOME/github/...` fallback import is gone — a resolution failure now surfaces as the real error.
+- The main package no longer exports `"./opencode"`; `files` narrows `adapters/` to `adapters/dsh/` so the workspace member is not double-shipped.
+- Adapter regression tests moved from `adapters/tests/` to top-level `tests/` (`npm files` array negation never worked — tests were silently shipped in the package).
 
 ## [0.3.0] - 2026-11-06
 

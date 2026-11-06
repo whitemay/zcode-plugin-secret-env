@@ -14,7 +14,7 @@
 
 ```
 action: install_bundle
-target: @foperate/secret-env@0.3.0        # 已发布包；本地开发用 <repo>
+target: @foperate/secret-env@0.3.1        # 已发布包；本地开发用 <repo>
 ```
 
 要点：

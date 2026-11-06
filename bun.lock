@@ -12,6 +12,16 @@
         "@opencode/plugin": "^2.2.5",
       },
     },
+    "adapters/opencode": {
+      "name": "@foperate/secret-env-opencode",
+      "version": "0.3.1",
+      "dependencies": {
+        "@foperate/secret-env": "workspace:*",
+      },
+      "peerDependencies": {
+        "@opencode/plugin": ">=2.0.0",
+      },
+    },
   },
   "packages": {
     "@ai-sdk/provider": ["@ai-sdk/provider@3.0.8", "https://registry.npmmirror.com/@ai-sdk/provider/-/provider-3.0.8.tgz", { "dependencies": { "json-schema": "^0.4.0" } }, "sha512-oGMAgGoQdBXbZqNG0Ze56CHjDZ1IDYOwGYxYjO5KLSlz5HiNQ9udIXsPZ61VWaHGZ5XW/jyjmr6t2xz2jGVwbQ=="],
@@ -69,6 +79,10 @@
     "@effect/platform-node": ["@effect/platform-node@4.0.6", "https://registry.npmmirror.com/@effect/platform-node/-/platform-node-4.0.6.tgz", { "dependencies": { "@effect/platform-node-shared": "^4.0.6", "undici": "^8.12.2" }, "peerDependencies": { "effect": "^4.0.6", "redis": ">=5.0.0 <7.0.0" } }, "sha512-gXvGHAy0/8PZbWvMMguloDUyeSP+rzYEo3FSEqUuGduxo9ORcGioDxPI+GOLCIFfam7VuNkmSUxBOiRMIrMrBw=="],
 
     "@effect/platform-node-shared": ["@effect/platform-node-shared@4.0.6", "https://registry.npmmirror.com/@effect/platform-node-shared/-/platform-node-shared-4.0.6.tgz", { "dependencies": { "@types/ws": "^8.18.2", "ws": "^8.22.0" }, "peerDependencies": { "effect": "^4.0.6" } }, "sha512-0PhyC4uG30xGtsajnxjkcBWfTjNRzUh4ZKl1Kvo/MNyCTb+W2O+fBzf7wCRCoqt+nLudiq4V7vX40Q8XIBuMaQ=="],
+
+    "@foperate/secret-env": ["@foperate/secret-env@root:", {}],
+
+    "@foperate/secret-env-opencode": ["@foperate/secret-env-opencode@workspace:adapters/opencode"],
 
     "@gar/promise-retry": ["@gar/promise-retry@1.0.3", "https://registry.npmmirror.com/@gar/promise-retry/-/promise-retry-1.0.3.tgz", {}, "sha512-GmzA9ckNokPypTg10pgpeHNQe7ph+iIKKmhKu3Ob9ANkswreCx7R3cKmY781K8QK3AqVL3xVh9A42JvIAbkkSA=="],
 

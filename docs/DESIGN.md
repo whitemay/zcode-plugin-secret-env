@@ -176,4 +176,16 @@ ZCode 已知宿主形态（无 password 掩码），故**不做运行时能力�
 
 理由：插件是主包的宿主适配层——注入与入库都直接 import 主包代码，终端兜底命令也假定 `senv` 存在；拆独立包只会多一次版本同步，不减少任何前置。主包被 pnpm 安装为真实副本（本地开发为 link），同时规避了「link 模式下插件从真实路径解析不到 profile 依赖」的坑（该坑曾导致 `add_secret` 静默不注册）。
 
-代价与边界：DSH profile 会安装整个 CLI 包（含 bin 与 kdbx 依赖），可接受——主包本来就是前置。ZCode 仍走仓库/本地 marketplace（marketplace 不认 npm spec），opencode 主包分发（配置 `plugin` 数组引用 `"@foperate/secret-env/opencode"`，skill/MCP 经 ctx 程序化注册）；三端版本天然一致。
+代价与边界：DSH profile 会安装整个 CLI 包（含 bin 与 kdbx 依赖），可接受——主包本来就是前置。ZCode 仍走仓库/本地 marketplace（marketplace 不认 npm spec）；opencode 走独立插件包（见第 12 节）；三端版本由发布流程保证一致（主包与插件包同版本号，插件包对主包用 `workspace:*`，bun pack 时自动转为实际版本）。
+
+## 12. 分发：opencode 独立插件包（2026-11-06 定案，0.3.1 落地）
+
+opencode 的 `plugin` 数组只接受 registry 包名（可带 version/range/tag）、git spec、本地路径三类 spec。实测（反编译 2.2.5 二进制，`D(f)` 函数）：`npa("@foperate/secret-env/opencode")` 解析出子路径后，`type` 不再属于 `version/range/tag`，函数返回 `undefined`，后续 add 分支直接打 npm 安装一个假路径（`/Users/<user>/@foperate/secret-env/opencode/package.json`），报 `NpmInstallFailedError`。因此**子路径 exports 只对程序化 `import` 有效，对 `plugin` 配置键无效**。
+
+结论：opencode 适配器拆为独立包 `@foperate/secret-env-opencode`，物理位置仍是 `adapters/opencode/`（npm workspace 成员，目录即包边界，不搬目录）。
+
+依赖与安装：插件包 `dependencies` 声明 `@foperate/secret-env: "workspace:*"`，用户需**同时全局安装两个包**（`bun install -g @foperate/secret-env @foperate/secret-env-opencode`）。只装插件包时主包虽会被连带装上，但作为传递依赖其 `bin` 不进 `~/.bun/bin` / `~/.npm/bin`，`senv` / `senv-mcp` 不在 `PATH` 上。
+
+跨包引用：适配器对主包的 core、`mcp.mjs`、skill 资产全部走 `createRequire` 绝对解析，MCP 命令用 `[process.execPath, <resolved mcp.mjs>]` 而非裸 `senv-mcp`，不依赖 `PATH`。skill 路径锚定主包根（`require.resolve("@foperate/secret-env/package.json")` 再拼 `secret-env/skills/...`），不再依赖两包之间的相对目录层级。
+
+与 DSH 的不对称是宿主机制决定的：DSH 的 `dsh.bundle.patch` 必须留在主包，无法拆分；opencode 则因 spec 限制必须独立成包。

@@ -68,19 +68,30 @@ npm i -g @foperate/secret-env   # 或安装已发布的 npm 包
 
 ZCode 壳：Plugin Marketplace → Add Marketplace 粘贴本仓库根 → Install **secret-env**（hooks.json 指向全局命令）。
 
-opencode 壳（V2）：随主包分发——在配置 `plugin` 数组里引用（插件内注册 `execute.before` bash 注入钩子 + `senv-mcp` MCP + skill）：
+opencode 壳（V2）：以**独立包** `@foperate/secret-env-opencode` 分发，需与主包**一起全局安装**（注入钩子、`senv-mcp` MCP 与 skill 均由该插件提供）：
+
+```bash
+bun install -g @foperate/secret-env @foperate/secret-env-opencode
+```
 
 ```jsonc
 // ~/.config/opencode/opencode.json（或项目 opencode.json）
-{ "plugin": ["@foperate/secret-env/opencode"] }
+{ "plugin": ["@foperate/secret-env-opencode"] }
 ```
 
-无需 cp：opencode 按 package.json 的子路径 exports 解析入口（本地开发 = 仓库 bun link 后，在 opencode 配置目录再 `bun link @foperate/secret-env`）。注意宿主**不会**自动发现插件包内的 `skills/` 目录——skill 由适配器经 `ctx.skill.transform` 程序化注册；删插件即连带 skill 与 MCP 一起消失。
+两条约束决定了这个装法：
+
+- **`plugin` 数组只认包名。** opencode 拒绝 `@scope/pkg/subpath` 形式的 spec——`npa` 解析出子路径后不再算 registry 的 version/range/tag，opencode 转而去 npm 装一个假路径（`/Users/<你>/@scope/pkg/subpath/package.json`，报 `NpmInstallFailedError`）。子路径 exports 仍可用于程序化 `import`，但不适用于这个配置键。
+- **两个包都要全局装。** 插件把主包声明为依赖，装插件会连带装上主包——但作为传递依赖安装时，其 `bin` 不会链进 `~/.bun/bin` 或 `~/.npm/bin`，导致 `senv` / `senv-mcp` 不在 `PATH` 上。两个都装在顶层才会建立链接。
+
+适配器通过 `createRequire` 解析主包绝对路径（core、`senv-mcp`、skill 资产），不依赖 `PATH`。本地开发：仓库根 `bun install` 建立 workspace 链接，再把 `plugin` 数组指向适配器目录。
+
+注意宿主**不会**自动发现插件包内的 `skills/` 目录——skill 由适配器经 `ctx.skill.transform` 从主包读取 `SKILL.md` 程序化注册；删插件即连带 skill 与 MCP 一起消失。
 
 DSH（DeepSeek Harness）bundle：**主包本身就是 DSH bundle**（根 `package.json` 的 `dsh.bundle.patch` 指向适配器 patch），不需要独立的插件包；Host 插件提供 bash 注入、文件/通道守卫、密钥清单注入与 `add_secret` 工具：
 
 1. 安装 Host 插件——可在 DSH 内让 agent 按本段执行（每次 `plugin_manager` 调用会请求一次完整文件权限审批）：
-   `plugin_manager` → `action: install_bundle`，`target` = `@foperate/secret-env@0.3.0`（已发布的包）或本仓库根目录的绝对路径（本地开发）。成功后 profile 的 `package.json` 依赖与 `dsh.profile.bundles` 会记录 `@foperate/secret-env`。
+   `plugin_manager` → `action: install_bundle`，`target` = `@foperate/secret-env@0.3.1`（已发布的包）或本仓库根目录的绝对路径（本地开发）。成功后 profile 的 `package.json` 依赖与 `dsh.profile.bundles` 会记录 `@foperate/secret-env`。
 2. 安装 skill（模型据此知道 secret-env 约定）：
    ```bash
    ln -sfn "$PWD/secret-env/skills/secret-env" ~/.dsh/skills/secret-env

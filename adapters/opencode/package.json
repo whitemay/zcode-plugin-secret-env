@@ -1,0 +1,29 @@
+{
+  "name": "@foperate/secret-env-opencode",
+  "version": "0.3.1",
+  "description": "secret-env 的 opencode 宿主插件：拦截 Bash 工具调用，把命令中的密钥引用解值注入子进程环境，并注册 senv-mcp 与 skill。",
+  "type": "module",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "secret-env",
+    "credential-injection"
+  ],
+  "license": "MIT",
+  "author": "whitemay",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/whitemay/zcode-plugin-secret-env.git",
+    "directory": "adapters/opencode"
+  },
+  "main": "./index.ts",
+  "files": [
+    "index.ts"
+  ],
+  "peerDependencies": {
+    "@opencode/plugin": ">=2.0.0"
+  },
+  "dependencies": {
+    "@foperate/secret-env": "workspace:*"
+  }
+}

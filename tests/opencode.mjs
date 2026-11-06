@@ -2,8 +2,7 @@
 // 覆盖：旁路、改名注入、braced、别名、dump 拒绝、单引号拒绝、env 文件原名 export。
 // 注意值断言只查 export 行的存在与名字，不打印真值。
 import { readFileSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import plugin, { skillAssetUrl } from "../adapters/opencode/index.ts";
+import plugin, { skillAssetPath } from "../adapters/opencode/index.ts";
 
 let pass = 0, fail = 0;
 const ok = (cond, label) => { cond ? pass++ : (fail++, console.error(`✗ ${label}`)); };
@@ -80,19 +79,25 @@ const readEnvFile = (command) => {
   }
 }
 
-// 9. MCP 注册断言
-ok(mcpServers.get("secret-env")?.command?.[0] === "senv-mcp", "senv-mcp 注册为 local stdio");
+// 9. MCP 注册断言：单个绝对路径命令（多元素会让 opencode 把首个参数当 cwd 去 chdir），不依赖 PATH
+{
+  const cmd = mcpServers.get("secret-env")?.command;
+  ok(cmd?.length === 1, "senv-mcp 命令为单元素");
+  ok(cmd?.[0]?.endsWith("/mcp.mjs") && existsSync(cmd[0]), "senv-mcp 指向主包内真实文件");
+  ok(cmd?.[0]?.startsWith("/"), "senv-mcp 用绝对路径，不依赖 PATH");
+}
 
-// 10. Skill 注册断言：frontmatter 字段与包内文件真实存在
+// 10. Skill 注册断言：frontmatter 字段与主包内文件真实存在
 {
   const s = skills.get("secret-env");
-  const file = readFileSync(fileURLToPath(skillAssetUrl()), "utf8");
+  const path = skillAssetPath();
+  const file = readFileSync(path, "utf8");
   ok(!!s, "skill 已注册");
   if (s) {
     ok(s.name === "secret-env", "skill name 正确");
     ok(s.description.includes("密钥"), "skill description 非空");
     ok(existsSync(s.path), "skill path 指向真实 SKILL.md");
-    ok(s.content === file, "content 与包内文件一致");
+    ok(s.content === file, "content 与主包文件一致");
   }
 }
 

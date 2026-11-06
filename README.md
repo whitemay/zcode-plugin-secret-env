@@ -68,18 +68,29 @@ npm i -g @foperate/secret-env   # or install the published package
 
 ZCode shell: Plugin Marketplace → Add Marketplace, paste this repo root → Install **secret-env** (hooks.json points at the global command).
 
-opencode shell (V2): distributed with the main package — add it to the config `plugin` array (registers the `execute.before` bash-injection hook, the `senv-mcp` MCP server, and the skill programmatically):
+opencode shell (V2): shipped as a **separate package** `@foperate/secret-env-opencode`, install it globally **together with the main package** (the plugin's injection hook, the `senv-mcp` MCP server and the skill are all provided by the plugin):
+
+```bash
+bun install -g @foperate/secret-env @foperate/secret-env-opencode
+```
 
 ```jsonc
 // ~/.config/opencode/opencode.json (or project opencode.json)
-{ "plugin": ["@foperate/secret-env/opencode"] }
+{ "plugin": ["@foperate/secret-env-opencode"] }
 ```
 
-No `cp` needed: opencode resolves the subpath export from the installed package (local dev = `bun link` the repo package, then `bun link @foperate/secret-env` inside the opencode config directory). Note the host does **not** auto-discover a plugin package's own `skills/` directory — the adapter registers the skill via `ctx.skill.transform`; removing the plugin removes skill and MCP with it.
+Two constraints shape this setup:
+
+- **The `plugin` array takes a package name only.** opencode rejects `@scope/pkg/subpath` specs — `npa` parses the subpath, the spec no longer counts as a registry version/range/tag, and opencode falls through to an npm install of a bogus path (`/Users/<you>/@scope/pkg/subpath/package.json`, `NpmInstallFailedError`). Subpath exports stay useful for programmatic `import`, not for this config key.
+- **Install both packages globally.** The plugin declares the main package as a dependency, so installing it pulls the main package in — but a transitively installed package's `bin` entries are not linked into `~/.bun/bin` or `~/.npm/bin`, so `senv` / `senv-mcp` would not be on `PATH`. Installing both at the top level links them.
+
+The adapter references the main package through `createRequire` absolute resolution (core, `senv-mcp`, and the skill asset), so it does not depend on `PATH`. Local development: `bun install` at the repo root establishes the workspace link, then point the plugin array at the adapter directory.
+
+Note the host does **not** auto-discover a plugin package's own `skills/` directory — the adapter registers the skill via `ctx.skill.transform`, reading `SKILL.md` from the main package; removing the plugin removes skill and MCP with it.
 
 DSH (DeepSeek Harness) bundle: **the main package itself is the DSH bundle** (the root `package.json` declares `dsh.bundle.patch` pointing at the adapter patch); no separate plugin package is needed. The Host plugin provides the bash injection, file/channel guards, the secret-list prompt section, and the `add_secret` tool:
 
-1. Install the Host plugin — inside DSH you can have the agent follow this section (each `plugin_manager` call asks for a one-shot full-file-access approval): `plugin_manager` → `action: install_bundle`, `target` = `@foperate/secret-env@0.3.0` (published package) or the absolute path of this repo root (local development). The profile's `package.json` dependency and `dsh.profile.bundles` record `@foperate/secret-env` afterwards.
+1. Install the Host plugin — inside DSH you can have the agent follow this section (each `plugin_manager` call asks for a one-shot full-file-access approval): `plugin_manager` → `action: install_bundle`, `target` = `@foperate/secret-env@0.3.1` (published package) or the absolute path of this repo root (local development). The profile's `package.json` dependency and `dsh.profile.bundles` record `@foperate/secret-env` afterwards.
 2. Install the skill (so the model knows the secret-env contract):
    ```bash
    ln -sfn "$PWD/secret-env/skills/secret-env" ~/.dsh/skills/secret-env

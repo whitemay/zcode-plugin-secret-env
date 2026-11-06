@@ -1,6 +1,6 @@
 {
   "name": "@foperate/secret-env",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "密钥从私有库直达 Bash 子进程环境，模型上下文永不见值。全局 CLI + 多宿主适配（ZCode / opencode / DSH）。",
   "type": "module",
   "keywords": [
@@ -27,6 +27,9 @@
     "srun": "./run.mjs",
     "senv-mcp": "./mcp.mjs"
   },
+  "workspaces": [
+    "adapters/opencode"
+  ],
   "exports": {
     "./core.mjs": "./core.mjs",
     "./cli.mjs": "./cli.mjs",
@@ -34,13 +37,12 @@
     "./mcp.mjs": "./mcp.mjs",
     "./run.mjs": "./run.mjs",
     "./dsh": "./adapters/dsh/index.js",
-    "./opencode": "./adapters/opencode/index.ts",
     "./package.json": "./package.json"
   },
   "files": [
     "README.md",
     "README.zh-CN.md",
-    "adapters/",
+    "adapters/dsh/",
     "cli.mjs",
     "core.mjs",
     "docs/INSTALL-DSH.md",

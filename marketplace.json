@@ -4,7 +4,7 @@
     {
       "name": "secret-env",
       "source": "./secret-env",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "description": "Inject secrets from private stores straight into the Bash subprocess environment; model context never sees values.",
       "displayName": "Secret Env",
       "description_i18n": { "zh-CN": "密钥从私有库（KeePassXC 库/OpenViking/Bitwarden/1Password）直达 Bash 子进程环境，模型上下文只见占位符/变量名，永不见值" },
