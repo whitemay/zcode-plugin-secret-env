@@ -1,0 +1,41 @@
+name: Bug 报告 / Bug report
+description: 功能不按预期工作 / Something does not work as documented
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 现象 / What happened
+      description: 期望行为 vs 实际行为 / Expected vs actual
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: 宿主 / Host
+      options:
+        - ZCode
+        - opencode
+        - DSH
+        - srun / senv（宿主外 / outside hosts）
+        - 其他 / other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / Version
+      description: `secret-env list` 输出或 npm 版本号 / output of `secret-env list` or npm version
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤 / Reproduction
+      description: 可复现的最小命令（请打码值，可给长度或指纹）/ minimal command (mask values, length or fingerprint is fine)
+  - type: checkboxes
+    id: security
+    attributes:
+      label: 安全确认 / Security check
+      description: 请勿粘贴真实凭据、token、session key 或 secrets.json 内容 / Do not paste real credentials, tokens, session keys, or secrets.json contents
+      options:
+        - label: 我确认内容不含真实凭据 / I confirm no real credentials are included
+          required: true
