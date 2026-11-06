@@ -1,8 +1,13 @@
 {
   "name": "@local/secret-env",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./index.js" },
+  "description": "Secret injection for DeepSeek Harness: bash env injection, file/channel guards, and an in-session add_secret tool whose values never enter model context.",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
 }

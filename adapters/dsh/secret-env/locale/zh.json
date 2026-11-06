@@ -1,0 +1,1 @@
+{ "meta": { "title": "Secret Env", "description": "把密钥注入 shell 子进程环境，模型上下文永远看不到值。" } }

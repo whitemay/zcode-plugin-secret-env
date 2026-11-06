@@ -74,28 +74,30 @@ opencode 壳：把适配器复制进插件目录（V2 API，`tool.execute.before
 cp adapters/opencode.ts ~/.config/opencode/plugins/secret-env.ts   # 或项目级 .opencode/plugins/
 ```
 
-DSH（DeepSeek Harness）壳：symlink cordis 插件包 + 在 profile 用户补丁层插一行（`tools/execute` waterfall 改写 `exec.arguments.command`，经探针真机验证，见 docs）：
+DSH（DeepSeek Harness）bundle：安装到当前 profile（`plugin_manager install_bundle`），由 Host 插件提供 bash 注入、文件/通道守卫、密钥清单注入与 `add_secret` 工具：
 
-```bash
-mkdir -p ~/.dsh/profiles/node_modules/@local
-ln -sfn "$PWD/adapters/dsh/secret-env" ~/.dsh/profiles/node_modules/@local/secret-env
-# 然后在 ~/.dsh/profiles/<profile>/cordis.patch.yml 加：
-# - insert:
-#     - id: secret-env
-#       name: '@local/secret-env'
-#       config: {}
-# 重启 DSH 加载新模块
-```
+1. 安装 Host 插件——可在 DSH 内让 agent 按本段执行（每次 `plugin_manager` 调用会请求一次完整文件权限审批）：
+   `plugin_manager` → `action: install_bundle`，`target` = 本仓库 `adapters/dsh/secret-env` 的绝对路径。成功后 profile 的 `package.json` 依赖与 `dsh.profile.bundles` 会记录它。
+2. 安装 skill（模型据此知道 secret-env 约定）：
+   ```bash
+   ln -sfn "$PWD/secret-env/skills/secret-env" ~/.dsh/skills/secret-env
+   ```
+3. 重启 DSH——Host 插件代码在启动时加载，安装/替换后都需要重启。
 
-MCP server（支持 MCP + elicitation 的宿主）：注册 `senv-mcp` 即可在会话内两步表单登记凭据——密钥值从宿主 UI 表单直达凭据库，不经模型上下文。ZCode 示例（`~/.zcode/cli/config.json`）：
+验证：新会话出现 `add_secret` 工具，系统提示出现已配置密钥清单（无真值）。更新：改 `adapters/dsh/secret-env/` 后重启 DSH；skill 是 symlink，改动热加载。卸载：`plugin_manager remove_bundle`（`@local/secret-env`）后删除 `~/.dsh/skills/secret-env`。
 
-```json
-"mcp": { "servers": { "secret-env": { "type": "stdio", "command": "senv-mcp" } } }
-```
+会话内登记（所有宿主）：agent 先通过问答与用户终审元数据——环境变量名及别名（从上下文推断 well-known 候选，或按 `KEY, alias1, alias2` 格式自定义）、可选描述、provider——然后给出一条完整的 `senv add` 命令由你在自己终端执行（隐藏输入，值不经对话）。这条终端通道是通用基线，任何宿主都可用。
 
-`add_secret` 工具入参仅作表单预填草稿（名字/provider/条目定位）；第 1 步用户在表单里终审，第 2 步按宿主能力自动路由——掩码表单 / 明文表单（宿主不支持掩码输入时弹出选择屏讲清代价）/ 终端命令三形态。返回值永远脱敏（不含密钥值）。不支持 elicitation 的宿主自然跳过此入口，终端 CLI 始终是通用通道。
+宿主集成把收值这一步升级为会话内卡片（密钥在宿主 UI 中键入，直达凭据库，不经模型上下文）：
 
-凭据入库（用户终端执行，隐藏输入，值不经对话）：
+| 宿主 | 通道 | 详情 |
+| --- | --- | --- |
+| ZCode | 插件自带：`senv-mcp`（MCP elicitation），安装即自动注册 | skill `references/zcode.md` |
+| DSH | DSH 适配器自带：`add_secret` 工具（宿主问答卡片） | skill `references/dsh.md` |
+
+无论哪条通道，密钥值都不进入模型上下文，返回给 agent 的结果永远脱敏（不含密钥值）。
+
+手工登记凭据（用户终端执行，隐藏输入，值不经对话）：
 
 ```bash
 secret-env add GH_TOKEN --provider keychain --desc 'GitHub 令牌' --alias GITHUB_TOKEN

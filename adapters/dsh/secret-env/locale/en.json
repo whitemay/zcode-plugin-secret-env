@@ -1,0 +1,1 @@
+{ "meta": { "title": "Secret Env", "description": "Inject credentials into shell commands without exposing values to the model." } }

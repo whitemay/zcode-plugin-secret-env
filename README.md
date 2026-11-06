@@ -74,28 +74,29 @@ opencode shell: copy the adapter into the plugins directory (V2 API, `tool.execu
 cp adapters/opencode.ts ~/.config/opencode/plugins/secret-env.ts   # or project .opencode/plugins/
 ```
 
-DSH (DeepSeek Harness) shell: link the cordis plugin package and insert a row in the profile's user patch layer (a verified `tools/execute` waterfall rewrite of `exec.arguments.command` — see probe record in docs):
+DSH (DeepSeek Harness) bundle: install it into the current profile with `plugin_manager install_bundle`. The Host plugin provides the bash injection, file/channel guards, the secret-list prompt section, and the `add_secret` tool:
 
-```bash
-mkdir -p ~/.dsh/profiles/node_modules/@local
-ln -sfn "$PWD/adapters/dsh/secret-env" ~/.dsh/profiles/node_modules/@local/secret-env
-# then add to ~/.dsh/profiles/<profile>/cordis.patch.yml:
-# - insert:
-#     - id: secret-env
-#       name: '@local/secret-env'
-#       config: {}
-# restart DSH to load the new module
-```
+1. Install the Host plugin — inside DSH you can have the agent follow this section (each `plugin_manager` call asks for a one-shot full-file-access approval): `plugin_manager` → `action: install_bundle`, `target` = the absolute path of this repo's `adapters/dsh/secret-env`. The profile's `package.json` dependency and `dsh.profile.bundles` record it afterwards.
+2. Install the skill (so the model knows the secret-env contract):
+   ```bash
+   ln -sfn "$PWD/secret-env/skills/secret-env" ~/.dsh/skills/secret-env
+   ```
+3. Restart DSH — Host plugin code loads at startup, so install/replace both need a restart.
 
-MCP server (hosts with MCP + elicitation support): register `senv-mcp` and in-session credential entry works via two-step forms — the secret goes straight from the host UI form to the credential store, never entering the model context. Example ZCode (`~/.zcode/cli/config.json`):
+Verify: a new session shows the `add_secret` tool and the configured-secret list in the system prompt (names only, never values). To update, change `adapters/dsh/secret-env/` and restart DSH; the skill is a symlink and hot-reloads. To uninstall, `plugin_manager remove_bundle` (`@local/secret-env`) and delete `~/.dsh/skills/secret-env`.
 
-```json
-"mcp": { "servers": { "secret-env": { "type": "stdio", "command": "senv-mcp" } } }
-```
+In-session registration (all hosts): the agent asks the user to finalize the metadata — env var name with aliases (well-known candidates from context or custom input in `KEY, alias1, alias2` form), an optional description, the provider — then hands over a complete `senv add` command to run in your own terminal (hidden input, the value never touches the conversation). This terminal path is the universal baseline and works on every host.
 
-The `add_secret` tool takes only prefilled drafts (name/provider/entry locator); the user reviews them in step 1, and step 2 auto-routes between a masked form, a plain form (host without masked-input support — the choice screen states the trade-offs), or a terminal command, by probing host capability. Results are always sanitized (never contain the value). Hosts without elicitation just skip this entry point — the terminal CLI remains the universal path.
+Host integrations upgrade the value-entry step to an in-session card (type the secret into the host UI; it is written straight to the credential store, never entering the model context):
 
-Vault a credential (run in your own terminal, hidden input, the value never touches the conversation):
+| Host | Channel | Detail |
+| --- | --- | --- |
+| ZCode | Bundled with the plugin: `senv-mcp` (MCP elicitation), auto-registered on install | skill `references/zcode.md` |
+| DSH | Bundled with the DSH adapter: the `add_secret` tool (host question card) | skill `references/dsh.md` |
+
+Whichever channel is used, the secret value never enters the model context, and results returned to the agent are always sanitized (never contain the value).
+
+Vault a credential manually (run in your own terminal, hidden input, the value never touches the conversation):
 
 ```bash
 secret-env add GH_TOKEN --provider keychain --desc 'GitHub token' --alias GITHUB_TOKEN

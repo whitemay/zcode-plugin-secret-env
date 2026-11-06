@@ -145,3 +145,27 @@ provider 选项主名已改 keychain（2026-11-05）：与 scheme 对齐，「sy
 
 - 项目级插件不碰 `.zcode/config.json`（aidlc 钩子属地），两套钩子并行无冲突
 - 探针/正式插件均需用户手动 UI 安装（plugin-creator 约定），本地市场基于目录，更新 = 改源码 + 市场里 refresh
+
+## 10. 会话内登记：两问题拆解（2026-11-06 定案，0.3.0 落地）
+
+入库交互拆成两个正交问题，各宿主各解；元数据问答与真值收集分属不同责任层。
+
+### 10.1 问题一：非敏感元数据（key/别名/desc/provider）——宿主原生问答
+
+元数据本就公开（desc 还必须进模型上下文才能进 SessionStart 清单），值过上下文无害，故由 agent 经宿主自带问答工具终审：ZCode=AskUserQuestion、DSH=ask_user_question、其它宿主=对话直问。形态=「agent 草稿作选项 + 自定义走宿主强制自由输入行」——key 题给出上下文推断的 well-known 候选列表（同凭据多周知名都列，如 HF_TOKEN/HUGGINGFACE_TOKEN），自由输入格式 `KEY, alias1, alias2`；宿主噪声（强制 Other/输入行）就此变成功能。答案由 agent 解析成定稿入参传收值工具，server 只信入参；归一化+重名检测做安全网，校验失败报 `invalid`+原因由 agent 回问（谁问的谁修，不重弹表单）。
+
+### 10.2 问题二：密钥真值——per-harness 隔离通道，终端命令为普适兜底
+
+| 宿主 | 通道 | 隔离机制 |
+|---|---|---|
+| ZCode | MCP elicitation（senv-mcp 的 add_secret） | 值→宿主→server 进程，模型只见脱敏 result |
+| DSH | 插件 add_secret 工具（ctx.userQuestions 卡片，答案只回插件代码） | 值→插件进程→storeEntry，模型只见脱敏 result |
+| 其它一切 | 终端 `senv add` 命令（agent 构造完整命令交用户执行，隐藏输入） | 值只在终端进程 |
+
+ZCode 已知宿主形态（无 password 掩码），故**不做运行时能力探测**（旧「探测并入首用」作废：挂载关系即宿主身份，支持矩阵已实测），收值一屏制=enum 唯一选项「手工通过命令行输入」+宿主强制自由输入框收值；收值文案口径=「密钥不经模型上下文→模型接触不到此输入→框里只能填密钥本身」；非 accept 一律附带现成 `senv add` 命令（declined=用户选终端通道，非失败）。DSH 卡片同构分流（custom 覆盖 selected 语义）。
+
+### 10.3 实现收敛与取舍记录
+
+- **entry.mjs（根，宿主无关）**：PROVIDERS/buildEntryOpts/entryCommandText 三端共用；cli.mjs storeEntry 仍是落库唯一真源。DSH 插件内的 entry.mjs 只放宿主专属文案与卡片答案解释（custom/selected 语义），re-export 共用层。
+- **曾议方案存档**：① senv-mcp 加第二个 tool（store_secret，capability 门控按 client 是否声明 elicitation 区分）专供 DSH 程序化调用——可行，但 DSH 侧要多养一个 node 子进程（PATH/运行时坑有前科）且隔离增益为零（值本就在插件进程），弃；② DSH wrapper 拦截 `senv add` 命令文本升级为卡片——触发物可与兜底统一，但命令文本解析脆，改为插件注册独立 add_secret 工具（结构化入参），已实现。
+- **MCP 定位**：MCP（elicitation）只是 ZCode 的实现通道，不是项目级能力——README 按「会话内登记」能力书写，MCP 降为宿主集成细节；设计论证留本节。

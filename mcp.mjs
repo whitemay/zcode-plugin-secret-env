@@ -66,7 +66,7 @@ rl.on("line", (line) => {
     send({ jsonrpc: "2.0", id: msg.id, result: {
       protocolVersion: msg.params?.protocolVersion ?? "2025-06-18",
       capabilities: { tools: {} },
-      serverInfo: { name: "secret-env", version: "0.2.0" },
+      serverInfo: { name: "secret-env", version: "0.3.0" },
     } });
     return;
   }
