@@ -91,14 +91,14 @@ Note the host does **not** auto-discover a plugin package's own `skills/` direct
 
 DSH (DeepSeek Harness) bundle: **the main package itself is the DSH bundle** (the root `package.json` declares `dsh.bundle.patch` pointing at the adapter patch); **no separate plugin package is needed** — unlike opencode, DSH installs the main package alone. The Host plugin provides the bash injection, file/channel guards, the secret-list prompt section, and the `add_secret` tool:
 
-1. Install the Host plugin — inside DSH you can have the agent follow this section (each `plugin_manager` call asks for a one-shot full-file-access approval): `plugin_manager` → `action: install_bundle`, `target` = `@foperate/secret-env@0.3.1` (published package) or the absolute path of this repo root (local development). The profile's `package.json` dependency and `dsh.profile.bundles` record `@foperate/secret-env` afterwards.
-2. Install the skill (so the model knows the secret-env contract):
+1. Install the Host plugin — inside DSH you can have the agent follow this section (each `plugin_manager` call asks for a one-shot full-file-access approval): `plugin_manager` → `action: install_bundle`, `target` = `@foperate/secret-env@0.3.1` (the npm package, never a local directory). The profile's `package.json` dependency and `dsh.profile.bundles` record `@foperate/secret-env` afterwards.
+2. Install the skill (so the model knows the secret-env contract), pointing at the **installed package**, not the repo:
    ```bash
-   ln -sfn "$PWD/skills/secret-env" ~/.dsh/skills/secret-env
+   ln -sfn "$HOME/.dsh/profiles/desktop/node_modules/@foperate/secret-env/skills/secret-env" ~/.dsh/skills/secret-env
    ```
 3. Restart DSH — Host plugin code loads at startup, so install/replace both need a restart.
 
-Verify: a new session shows the `add_secret` tool and the configured-secret list in the system prompt (names only, never values). To update, upgrade the main package (or change `adapters/dsh/`) and restart DSH; the skill is a symlink and hot-reloads. To uninstall, `plugin_manager remove_bundle` (`@foperate/secret-env`) and delete `~/.dsh/skills/secret-env`. The step-by-step agent-facing version is [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md).
+Verify: a new session shows the `add_secret` tool and the configured-secret list in the system prompt (names only, never values). To update, upgrade the main package and restart DSH; the skill symlink follows the installed package across upgrades. To uninstall, `plugin_manager remove_bundle` (`@foperate/secret-env`) and delete `~/.dsh/skills/secret-env`. The step-by-step agent-facing version is [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md).
 
 In-session registration (all hosts): the agent asks the user to finalize the metadata — env var name with aliases (well-known candidates from context or custom input in `KEY, alias1, alias2` form), an optional description, the provider — then hands over a complete `senv add` command to run in your own terminal (hidden input, the value never touches the conversation). This terminal path is the universal baseline and works on every host.
 

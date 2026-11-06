@@ -92,14 +92,14 @@ bun install -g @foperate/secret-env @foperate/secret-env-opencode
 DSH（DeepSeek Harness）bundle：**主包本身就是 DSH bundle**（根 `package.json` 的 `dsh.bundle.patch` 指向适配器 patch），**不需要独立的插件包**——这点与 opencode 不同，DSH 只装主包。Host 插件提供 bash 注入、文件/通道守卫、密钥清单注入与 `add_secret` 工具：
 
 1. 安装 Host 插件——可在 DSH 内让 agent 按本段执行（每次 `plugin_manager` 调用会请求一次完整文件权限审批）：
-   `plugin_manager` → `action: install_bundle`，`target` = `@foperate/secret-env@0.3.1`（已发布的包）或本仓库根目录的绝对路径（本地开发）。成功后 profile 的 `package.json` 依赖与 `dsh.profile.bundles` 会记录 `@foperate/secret-env`。
-2. 安装 skill（模型据此知道 secret-env 约定）：
+   `plugin_manager` → `action: install_bundle`，`target` = `@foperate/secret-env@0.3.1`（npm 上的主包，不指向本地目录）。成功后 profile 的 `package.json` 依赖与 `dsh.profile.bundles` 会记录 `@foperate/secret-env`。
+2. 安装 skill（模型据此知道 secret-env 约定），指向**已安装的主包**而非仓库目录：
    ```bash
-   ln -sfn "$PWD/skills/secret-env" ~/.dsh/skills/secret-env
+   ln -sfn "$HOME/.dsh/profiles/desktop/node_modules/@foperate/secret-env/skills/secret-env" ~/.dsh/skills/secret-env
    ```
 3. 重启 DSH——Host 插件代码在启动时加载，安装/替换后都需要重启。
 
-验证：新会话出现 `add_secret` 工具，系统提示出现已配置密钥清单（无真值）。更新：升级主包（或改 `adapters/dsh/` 后）重启 DSH；skill 是 symlink，改动热加载。卸载：`plugin_manager remove_bundle`（`@foperate/secret-env`）后删除 `~/.dsh/skills/secret-env`。给 agent 逐步执行的版本见 [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md)。
+验证：新会话出现 `add_secret` 工具，系统提示出现已配置密钥清单（无真值）。更新：升级主包后重启 DSH，skill symlink 随主包升级自动指向新版本。卸载：`plugin_manager remove_bundle`（`@foperate/secret-env`）后删除 `~/.dsh/skills/secret-env`。给 agent 逐步执行的版本见 [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md)。
 
 会话内登记（所有宿主）：agent 先通过问答与用户终审元数据——环境变量名及别名（从上下文推断 well-known 候选，或按 `KEY, alias1, alias2` 格式自定义）、可选描述、provider——然后给出一条完整的 `senv add` 命令由你在自己终端执行（隐藏输入，值不经对话）。这条终端通道是通用基线，任何宿主都可用。
 
