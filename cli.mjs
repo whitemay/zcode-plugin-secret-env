@@ -26,7 +26,7 @@ function log(msg) {
 //        --provider bitwarden --item I [--field F]   写 vault：无 field → password 位（条目不存在则新建 login 条目）；
 //                                                    有 field → 已存在条目上 upsert 自定义字段；--user 写 username 位
 //        --provider viking --path c/t[/f]            写 OpenViking privacy（值经 0600 临时文件，不落 argv）；无 f 时主值落 value 字段
-function envNameFromHuman(name) {
+export function envNameFromHuman(name) {
   // 驼峰拆词 → 按非字母数字切词 → 大写下划线
   const words = name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[^A-Za-z0-9]+/).filter(Boolean);
   return words.join("_").toUpperCase();
@@ -73,94 +73,82 @@ function updateConfig(name, def) {
   return raw;
 }
 
+// 共用入库主体：校验 → provider 写入 → 登记。CLI 与 MCP server 共用（防漂移），错误一律 throw。
+// value 由调用方收好传入（CLI=终端隐藏输入/位置参数；MCP=elicitation 表单），本函数不收值。
+export async function storeEntry(opts, value) {
+  if (!value) throw new Error("空值，放弃");
+  const envName = envNameFromHuman(opts.name);
+  if (!envName) throw new Error(`name 归一化后为空：${opts.name}`);
+  if (opts.provider === "system") opts.provider = "keychain"; // 弃用别名，行为一致
+  if (!["keychain", "bitwarden", "onepassword", "viking"].includes(opts.provider)) throw new Error(`未知 provider：${opts.provider}`);
+  if (opts.user && !["keychain", "bitwarden"].includes(opts.provider)) throw new Error("--user 仅支持 keychain 与 bitwarden provider（account/username 位）");
+  if (opts.provider === "bitwarden" || opts.provider === "onepassword") {
+    if (!opts.item) throw new Error(`${opts.provider} 需要 --item <条目名>[，--field <字段> 二级写入]`);
+    if (opts.user && opts.field) throw new Error("--user 与 --field 互斥（字段写入不带 username 位）");
+  }
+  let uri;
+  if (opts.provider === "keychain") {
+    const service = opts.service ?? serviceFromHuman(opts.name);
+    const backend = await keychainBackend(loadConfig()); // kdbx 配置则写库，否则系统密钥库（二进制探测/库配置校验先于人话报错）
+    await backend.write(service, value, opts.user);
+    uri = `keychain://${service}`;
+  } else if (opts.provider === "bitwarden") {
+    // 写侧自治：经配置里的 BW_SESSION 记录解析 session 后写入 vault
+    await writeValue({ provider: "bitwarden", item: opts.item, field: opts.field, user: opts.user }, value, loadConfig());
+    uri = `bitwarden://${opts.item}${opts.field ? `/${opts.field}` : ""}`;
+  } else if (opts.provider === "onepassword") {
+    // 写侧自治：经配置里的 OP_SESSION 记录（或 biometric）写入 1Password。⚠️ 全线待真机验证。
+    await writeValue({ provider: "onepassword", item: opts.item, field: opts.field, user: opts.user }, value, loadConfig());
+    uri = `onepassword://${opts.item}${opts.field ? `/${opts.field}` : ""}`;
+  } else {
+    const parts = opts.path?.split("/") ?? [];
+    if (parts.length < 2 || parts.length > 3) throw new Error("viking 需要 --path <category>/<target>[/<field>]");
+    // 写侧自治：值经 0600 临时文件走 ov privacy upsert（不落 argv）
+    await writeValue({ provider: "viking", parts: parts.length === 2 ? [...parts, "value"] : parts }, value);
+    uri = `viking://${parts.join("/")}`;
+  }
+  const raw = updateConfig(envName, { uri, ...(opts.aliases.length ? { aliases: opts.aliases } : {}), ...(opts.description ? { description: opts.description } : {}) });
+  return { envName, uri, raw };
+}
+
 async function cmdAdd(args) {
   const opts = parseAddArgs(args);
   if (!opts.name) {
     console.error("用法：secret-env add -n <name> [TOKEN] [--alias A]... [--desc D] [--provider keychain|viking|bitwarden|onepassword ...]\n  统一流程：收值（隐藏输入或位置参数）→ provider 写入 → 登记 uri。写侧自治：bitwarden 走配置里的 BW_SESSION，onepassword 走 OP_SESSION 或 biometric，viking 走本机 ov。\n  keychain：--service 可选（缺省自动命名），--user 可选（account/username 位，缺省 = 当前系统用户）；配置 $keychain 时写 kdbx 库，否则系统密钥库（system 为弃用别名）\n  bitwarden：--item <条目名> 必选；--field <字段> 二级写入（条目须已存在）；--user 写 username 位\n  onepassword：--item <条目名> 必选；--field <字段> 二级写入；--user 写 username 位（待真机验证）\n  viking：--path <category>/<target>[/<field>]；无 field 时主值落 value 字段\n  已存在条目不带 --provider 时进入维护模式（只改别名/描述），显式给 --provider 则强制重新收值");
     process.exit(2);
   }
-  const envName = envNameFromHuman(opts.name);
-  if (!envName) { console.error(`name 归一化后为空：${opts.name}`); process.exit(2); }
-  // provider 主名 = keychain（与 keychain:// scheme 对齐——接口名跟实现走会漂移，引擎可换而接口不变）；
-  // system 是弃用别名：仍接受（向后兼容），打印迁移提示，行为完全一致。
-  // 显式 provider 名的功能意义不变：条目已存在时绕过维护模式，强制重新收值入库。
+  // system 是弃用别名：仍接受（向后兼容），打印迁移提示，行为完全一致
   if (opts.provider === "system") {
     console.error("⚠️  --provider system 已弃用，改用 --provider keychain（同一行为；system 将在后续版本移除）。本次仍按 keychain 执行。");
     opts.provider = "keychain";
   }
-
+  const envName = envNameFromHuman(opts.name);
   const existing = JSON.parse(readFileSync(CONFIG_PATH, "utf8"))[envName];
   if (!opts.provider && !existing) { console.error(`新条目需要 --provider（keychain|viking|bitwarden）`); process.exit(2); }
   // 收值需要真终端；Agent 的 Bash 无 TTY，值必须由用户亲手输入（给了位置参数 token 则免交互）
-  const needsPrompt = opts.provider && !opts.token;
-  if (needsPrompt && !process.stdin.isTTY) {
+  if (opts.provider && !opts.token && !process.stdin.isTTY) {
     console.error("收值需要交互终端（TTY）。请在你的终端里直接运行本命令（或把 token 作为位置参数传入），值不会经过 Agent。");
     process.exit(2);
   }
 
-  let uri;
   if (!opts.provider && existing) {
     // 维护模式：保留 uri 与已存的值，只改别名/描述
-    uri = existing.uri;
-    console.log(`维护模式：${envName} 已存在（${uri}），值不动。`);
-  } else if (opts.provider === "keychain") {
-    const service = opts.service ?? serviceFromHuman(opts.name);
-    const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
-    try {
-      const backend = await keychainBackend(loadConfig()); // kdbx 配置则写库，否则系统密钥库（二进制探测/库配置校验先于人话报错）
-      await backend.write(service, value, opts.user);
-    } catch (e) {
-      console.error(`入库失败：${e.message}`);
-      process.exit(2);
-    }
-    uri = `keychain://${service}`;
-  } else if (opts.provider === "bitwarden") {
-    if (!opts.item) { console.error("bitwarden 需要 --item <item>[，--field <字段> 二级写入]"); process.exit(2); }
-    if (opts.user && opts.field) { console.error("--user 与 --field 互斥（字段写入不带 username 位）"); process.exit(2); }
-    const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
-    try {
-      // 写侧自治：经配置里的 BW_SESSION 记录解析 session 后写入 vault
-      await writeValue({ provider: "bitwarden", item: opts.item, field: opts.field, user: opts.user }, value, loadConfig());
-    } catch (e) {
-      console.error(`入库失败：${e.message}`);
-      process.exit(2);
-    }
-    uri = `bitwarden://${opts.item}${opts.field ? `/${opts.field}` : ""}`;
-  } else if (opts.provider === "onepassword") {
-    if (!opts.item) { console.error("onepassword 需要 --item <item>[，--field <字段> 二级写入]"); process.exit(2); }
-    if (opts.user && opts.field) { console.error("--user 与 --field 互斥"); process.exit(2); }
-    const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
-    try {
-      // 写侧自治：经配置里的 OP_SESSION 记录（或 biometric）写入 1Password。⚠️ 全线待真机验证。
-      await writeValue({ provider: "onepassword", item: opts.item, field: opts.field, user: opts.user }, value, loadConfig());
-    } catch (e) {
-      console.error(`入库失败：${e.message}`);
-      process.exit(2);
-    }
-    uri = `onepassword://${opts.item}${opts.field ? `/${opts.field}` : ""}`;
-  } else if (opts.provider === "viking") {
-    if (!opts.path) { console.error("viking 需要 --path <category>/<target>[/<field>]"); process.exit(2); }
-    const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
-    const parts = opts.path.split("/");
-    if (parts.length < 2 || parts.length > 3) { console.error("--path 需为 <category>/<target>[/<field>]"); process.exit(2); }
-    try {
-      // 写侧自治：值经 0600 临时文件走 ov privacy upsert（不落 argv）
-      await writeValue({ provider: "viking", parts: parts.length === 2 ? [...parts, "value"] : parts }, value);
-    } catch (e) {
-      console.error(`入库失败：${e.message}`);
-      process.exit(2);
-    }
-    uri = `viking://${parts.join("/")}`;
-  } else if (opts.user) {
-    console.error("--user 仅支持 keychain 与 bitwarden provider（account/username 位）"); process.exit(2);
-  } else {
-    console.error(`未知 provider：${opts.provider}`); process.exit(2);
+    console.log(`维护模式：${envName} 已存在（${existing.uri}），值不动。`);
+    const raw = updateConfig(envName, { uri: existing.uri, ...(opts.aliases.length ? { aliases: opts.aliases } : {}), ...(opts.description ? { description: opts.description } : {}) });
+    console.log(`secrets.json 现有条目：${Object.keys(raw).join("、")}`);
+    return;
   }
 
-  const raw = updateConfig(envName, { uri, ...(opts.aliases.length ? { aliases: opts.aliases } : {}), ...(opts.description ? { description: opts.description } : {}) });
-  console.log(`已登记 ${envName} → ${uri}`);
-  console.log(`secrets.json 现有条目：${Object.keys(raw).join("、")}`);
-  console.log("下个 session 的清单注入将自动包含新条目。");
+  const value = opts.token ?? await promptHiddenValue(`输入 ${envName} 的值（隐藏输入，回车确认）: `);
+  try {
+    const { envName: n, uri, raw } = await storeEntry(opts, value);
+    console.log(`已登记 ${n} → ${uri}`);
+    console.log(`secrets.json 现有条目：${Object.keys(raw).join("、")}`);
+    console.log("下个 session 的清单注入将自动包含新条目。");
+  } catch (e) {
+    console.error(`入库失败：${e.message}`);
+    process.exit(2);
+  }
 }
 
 async function cmdRemove(args) {
@@ -303,9 +291,12 @@ async function cmdHookZcode() {
   allow({ ...payload.tool_input, command: newCommand });
 }
 
-// ---------- 入口 ----------
+// ---------- 入口（仅作为脚本直跑时分发；被 mcp.mjs import 时不执行，避免误入分发分支） ----------
 const [cmd, ...rest] = argv.slice(2);
-if (cmd === "add") await cmdAdd(rest);
+const asMain = process.argv[1] && import.meta.url === (await import("node:url")).pathToFileURL(process.argv[1]).href;
+if (!asMain) {
+  // 被 import：只取导出，不进分发
+} else if (cmd === "add") await cmdAdd(rest);
 else if (cmd === "remove") await cmdRemove(rest);
 else if (cmd === "list" && rest[0] === "--inject") cmdInjectList();
 else if (cmd === "list") cmdList();

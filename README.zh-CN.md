@@ -87,6 +87,14 @@ ln -sfn "$PWD/adapters/dsh/secret-env" ~/.dsh/profiles/node_modules/@local/secre
 # 重启 DSH 加载新模块
 ```
 
+MCP server（支持 MCP + elicitation 的宿主）：注册 `senv-mcp` 即可在会话内两步表单登记凭据——密钥值从宿主 UI 表单直达凭据库，不经模型上下文。ZCode 示例（`~/.zcode/cli/config.json`）：
+
+```json
+"mcp": { "servers": { "secret-env": { "type": "stdio", "command": "senv-mcp" } } }
+```
+
+`add_secret` 工具入参仅作表单预填草稿（名字/provider/条目定位）；第 1 步用户在表单里终审，第 2 步按宿主能力自动路由——掩码表单 / 明文表单（宿主不支持掩码输入时弹出选择屏讲清代价）/ 终端命令三形态。返回值永远脱敏（不含密钥值）。不支持 elicitation 的宿主自然跳过此入口，终端 CLI 始终是通用通道。
+
 凭据入库（用户终端执行，隐藏输入，值不经对话）：
 
 ```bash

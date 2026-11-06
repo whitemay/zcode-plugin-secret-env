@@ -24,19 +24,21 @@
   "bin": {
     "secret-env": "./cli.mjs",
     "senv": "./cli.mjs",
-    "srun": "./run.mjs"
+    "srun": "./run.mjs",
+    "senv-mcp": "./mcp.mjs"
   },
   "files": [
-    "cli.mjs",
-    "run.mjs",
-    "core.mjs",
-    "adapters/",
-    "secret-env/secrets.example.json",
+    "!adapters/dsh/probe-overlay.yml",
+    "!adapters/dsh/secret-env-probe/",
+    "!adapters/tests/",
     "README.md",
     "README.zh-CN.md",
-    "!adapters/dsh/secret-env-probe/",
-    "!adapters/dsh/probe-overlay.yml",
-    "!adapters/tests/"
+    "adapters/",
+    "cli.mjs",
+    "core.mjs",
+    "mcp.mjs",
+    "run.mjs",
+    "secret-env/secrets.example.json"
   ],
   "scripts": {
     "test": "bun secret-env/tests/hook.mjs"

@@ -87,6 +87,14 @@ ln -sfn "$PWD/adapters/dsh/secret-env" ~/.dsh/profiles/node_modules/@local/secre
 # restart DSH to load the new module
 ```
 
+MCP server (hosts with MCP + elicitation support): register `senv-mcp` and in-session credential entry works via two-step forms — the secret goes straight from the host UI form to the credential store, never entering the model context. Example ZCode (`~/.zcode/cli/config.json`):
+
+```json
+"mcp": { "servers": { "secret-env": { "type": "stdio", "command": "senv-mcp" } } }
+```
+
+The `add_secret` tool takes only prefilled drafts (name/provider/entry locator); the user reviews them in step 1, and step 2 auto-routes between a masked form, a plain form (host without masked-input support — the choice screen states the trade-offs), or a terminal command, by probing host capability. Results are always sanitized (never contain the value). Hosts without elicitation just skip this entry point — the terminal CLI remains the universal path.
+
 Vault a credential (run in your own terminal, hidden input, the value never touches the conversation):
 
 ```bash
