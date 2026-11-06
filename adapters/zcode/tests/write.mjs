@@ -1,6 +1,6 @@
-// 写侧自治测试：viking / bitwarden 探针条目写入→读回对账，用后即删。运行：bun secret-env/tests/write.mjs
+// 写侧自治测试：viking / bitwarden 探针条目写入→读回对账，用后即删。运行：bun adapters/zcode/tests/write.mjs
 // 值只进内存/长度断言，不打印。
-import { writeValue, resolveValue, loadConfig } from "../../core.mjs";
+import { writeValue, resolveValue, loadConfig } from "../../../core.mjs";
 import { execFileSync } from "node:child_process";
 
 let failed = 0;

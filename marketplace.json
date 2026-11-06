@@ -3,11 +3,16 @@
   "plugins": [
     {
       "name": "secret-env",
-      "source": "./secret-env",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/whitemay/zcode-plugin-secret-env.git",
+        "path": "adapters/zcode",
+        "ref": "v0.3.1"
+      },
       "version": "0.3.1",
-      "description": "Inject secrets from private stores straight into the Bash subprocess environment; model context never sees values.",
+      "description": "Inject secrets from private stores straight into the Bash subprocess environment; model context never sees values. Requires the global command `npm i -g @foperate/secret-env`.",
       "displayName": "Secret Env",
-      "description_i18n": { "zh-CN": "密钥从私有库（KeePassXC 库/OpenViking/Bitwarden/1Password）直达 Bash 子进程环境，模型上下文只见占位符/变量名，永不见值" },
+      "description_i18n": { "zh-CN": "密钥从私有库（KeePassXC 库/OpenViking/Bitwarden/1Password）直达 Bash 子进程环境，模型上下文只见占位符/变量名，永不见值。需先全局安装命令 `npm i -g @foperate/secret-env`" },
       "category": "developer-tools"
     }
   ]

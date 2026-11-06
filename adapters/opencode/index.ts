@@ -3,34 +3,34 @@
 // opencode.json 的 plugin 数组只写包名——宿主不接受 "@scope/pkg/subpath" 形式（npa 解析出子路径后
 // 判为非法 spec，转去打 npm 装假路径 /Users/<user>/@scope/pkg/subpath/package.json 并报 NpmInstallFailedError）。
 // 主包 @foperate/secret-env 是依赖：装插件包会连带装上，但其 bin 不保证进全局 PATH（作为传递依赖时不会），
-// 因此本文件对主包的一切引用都走 createRequire 解析绝对路径，不依赖 PATH。
+// 因此 core / mcp.mjs 走 createRequire 解析绝对路径，不依赖 PATH。
+// skill 不做跨包引用：本插件包自带一份副本（adapters/opencode/skills/secret-env/），与仓库根
+// skills/secret-env/（权威）逐字节一致，由 tests/skill-sync.mjs 校验。
 // 机制：① ctx.tool.hook("execute.before") 拦截 bash/shell，扫描命令文本中的密钥引用，
 // 解值写入 0600 env 文件，event.input.command 加 source 前缀——与 ZCode/DSH 同一核心（core.mjs）；
 // ② ctx.mcp.transform 注册 senv-mcp（stdio，对齐 ZCode plugin.json 的 mcpServers）；
 // ③ ctx.skill.transform 注册 skill——宿主没有"插件包内 skills/ 自动发现"，必须程序化注册，
-// path 指向主包内的 secret-env/skills/secret-env/SKILL.md（references/ 兄弟文件被一并收载）。
+// path 指向包内副本 skills/secret-env/SKILL.md（references/ 兄弟文件被一并收载）。
 import { Plugin } from "@opencode/plugin";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 type Core = typeof import("@foperate/secret-env/core.mjs");
 
 const require = createRequire(import.meta.url);
 
-// 主包根目录：从依赖解析出的 package.json 反推，不依赖插件包与主包的目录相对位置。
-function mainPackageRoot(): string {
-  return dirname(require.resolve("@foperate/secret-env/package.json"));
-}
+// 本插件包根目录（index.ts 就在包根）。
+const PLUGIN_ROOT = dirname(fileURLToPath(import.meta.url));
 
 async function loadCore(): Promise<Core> {
   return (await import(pathToFileURL(require.resolve("@foperate/secret-env/core.mjs")).href)) as Core;
 }
 
-// skill 资产在主包内，与插件包不同层；路径锚定主包根而非 import.meta.url 的相对层级。
+// skill 用本包内的副本，不跨包解析主包路径。
 export function skillAssetPath(): string {
-  return join(mainPackageRoot(), "secret-env", "skills", "secret-env", "SKILL.md");
+  return join(PLUGIN_ROOT, "skills", "secret-env", "SKILL.md");
 }
 
 export default Plugin.define({

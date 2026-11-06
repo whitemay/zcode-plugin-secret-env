@@ -1,9 +1,9 @@
-// secret-env 钩子回归测试。运行：bun secret-env/tests/hook.mjs
+// secret-env 钩子回归测试。运行：bun adapters/zcode/tests/hook.mjs
 // 注：payload 内的 $VAR 一律用 "$" + "NAME" 拼接构造，避免本会话钩子误拦测试命令文本。
 import { writeFileSync, unlinkSync } from "node:fs";
 
 const D = "$";
-const HOOK = new URL("../../cli.mjs", import.meta.url).pathname + " hook zcode";
+const HOOK = new URL("../../../cli.mjs", import.meta.url).pathname + " hook zcode";
 const TMP = "/tmp/secret-env-test-payload.json";
 
 function run(command, sessionId = "test") {

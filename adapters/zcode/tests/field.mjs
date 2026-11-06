@@ -1,6 +1,6 @@
 // 字段寻址测试：keychain/account 探针往返 + bitwarden 字段解析（单测 + 真机对账）。
-// 运行：bun secret-env/tests/field.mjs（探针条目用后即删；bw 对账只打印长度，不打印值）
-import { systemBackend, resolveValue, pickBwField, loadConfig } from "../../core.mjs";
+// 运行：bun adapters/zcode/tests/field.mjs（探针条目用后即删；bw 对账只打印长度，不打印值）
+import { systemBackend, resolveValue, pickBwField, loadConfig } from "../../../core.mjs";
 
 let failed = 0;
 function check(name, cond, detail = "") {

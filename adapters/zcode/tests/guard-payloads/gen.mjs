@@ -14,8 +14,8 @@ const payloads = {
   "write-vault.json": { tool_name: "Write", tool_input: { file_path: `${HOME}/.config/secret-env/vault.kdbx`, content: "x" } },
   // Edit：file_path 指向稳定配置 → deny
   "edit-config.json": { tool_name: "Edit", tool_input: { file_path: `${HOME}/.config/secret-env/secrets.json`, old_string: "a", new_string: "b" } },
-  // Read：file_path 指向插件兼容位 secrets.json → deny
-  "read-compat.json": { tool_name: "Read", tool_input: { file_path: "/Users/aston/github/zcode-plugin-secret-env/secret-env/secrets.json" } },
+  // Read：file_path 指向 ZCode 适配器兼容位的 secrets.json → deny
+  "read-compat.json": { tool_name: "Read", tool_input: { file_path: "/Users/aston/github/zcode-plugin-secret-env/adapters/zcode/secrets.json" } },
   // Write：无关文件 → allow
   "write-unrelated.json": { tool_name: "Write", tool_input: { file_path: "/tmp/secret-env-guard-unrelated.txt", content: "x" } },
 };

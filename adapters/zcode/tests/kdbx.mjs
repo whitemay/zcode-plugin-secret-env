@@ -1,4 +1,4 @@
-// kdbx 后端回归测试（读侧）：bun secret-env/tests/kdbx.mjs 或 node secret-env/tests/kdbx.mjs
+// kdbx 后端回归测试（读侧）：bun adapters/zcode/tests/kdbx.mjs 或 node adapters/zcode/tests/kdbx.mjs
 // 临时假库（假口令假值）现场生成用完即删，不碰真凭据。
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";

@@ -5,6 +5,7 @@
 ## 前置
 
 - 在 DSH 会话中执行。
+- **只装主包即可**：DSH 不需要独立的插件包（opencode 才需要）。
 - **主包是插件本体**：`@foperate/secret-env` 的根 `package.json` 声明了 `dsh.bundle.patch`，安装主包即安装 DSH 插件（适配器在包内 `adapters/dsh/`，patch 通过 exports 的 `@foperate/secret-env/dsh` 解析）。不需要独立的 DSH 插件包。
 - 仓库路径：`/Users/aston/github/zcode-plugin-secret-env`（下文用 `<repo>` 表示绝对路径）。
 
@@ -29,7 +30,7 @@ target: @foperate/secret-env@0.3.1        # 已发布包；本地开发用 <repo
 
 ```bash
 mkdir -p ~/.dsh/skills
-ln -sfn "<repo>/secret-env/skills/secret-env" ~/.dsh/skills/secret-env
+ln -sfn "<repo>/skills/secret-env" ~/.dsh/skills/secret-env
 ```
 
 skill 指向仓库，后续改 `SKILL.md` / `references/` 会热加载，无需重装。
@@ -47,7 +48,7 @@ Host 插件代码在 DSH 启动时加载，安装或替换后都必须重启。*
 ## 更新
 
 - 升级主包（或本地开发时改 `adapters/dsh/`）后重启 DSH。
-- skill 是 symlink，改 `secret-env/skills/secret-env/` 后无需重启。
+- skill 是 symlink，改 `skills/secret-env/` 后无需重启。
 
 ## 卸载
 

@@ -43,19 +43,22 @@
     "README.md",
     "README.zh-CN.md",
     "adapters/dsh/",
+    "adapters/zcode/secrets.example.json",
+    "skills/",
     "cli.mjs",
     "core.mjs",
     "docs/INSTALL-DSH.md",
     "entry.mjs",
     "mcp.mjs",
-    "run.mjs",
-    "secret-env/secrets.example.json",
-    "secret-env/skills/"
+    "run.mjs"
   ],
   "scripts": {
-    "test": "bun secret-env/tests/hook.mjs",
+    "test": "bun adapters/zcode/tests/hook.mjs",
     "test:dsh": "bun tests/dsh-guard.mjs",
-    "test:opencode": "bun tests/opencode.mjs"
+    "test:opencode": "bun tests/opencode.mjs",
+    "test:skill-sync": "bun tests/skill-sync.mjs",
+    "skill:sync": "bun tests/skill-sync-copy.mjs",
+    "test:all": "bun tests/skill-sync.mjs && bun adapters/zcode/tests/hook.mjs && bun tests/dsh-guard.mjs && bun tests/opencode.mjs"
   },
   "engines": {
     "node": ">=18"

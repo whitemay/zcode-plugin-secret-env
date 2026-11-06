@@ -2,7 +2,7 @@
 //   ① 协议骨架 initialize/tools/list；② 缺 name → status=invalid 零 elicitation；③ password 支持宿主→直通表单→stored
 //   （kdbx 假库）；④ 同名重调 → invalid 零 elicitation；⑤ password 拒绝宿主→无感降级选择屏→command 形态；
 //   ⑥ 选择屏 cancel 不落库；⑦ 结果永不含值。
-// 运行：bun secret-env/tests/mcp.mjs（HOME 重定向到临时目录，隔离真实配置）
+// 运行：bun adapters/zcode/tests/mcp.mjs（HOME 重定向到临时目录，隔离真实配置）
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";

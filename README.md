@@ -59,14 +59,15 @@ The named form is the default and recommended one. For long-running services, `s
 
 ## Install
 
-This project is an npm package plus thin per-host shells. Global command (the real body):
+This project is an npm package plus thin per-host shells. Install per harness — **ZCode and DSH use the main package only; opencode additionally needs its own plugin package.**
+
+Global command (the real body). It is **required** for ZCode, whose hooks shell out to the bare `secret-env` / `senv-mcp` commands; opencode and DSH get their own copy through their dependency install and resolve it absolutely, so they do not need it on `PATH`:
 
 ```bash
-bun link   # run inside the repo; registers both the secret-env and senv commands (same CLI, short alias) (or npm i -g .)
-npm i -g @foperate/secret-env   # or install the published package
+npm i -g @foperate/secret-env   # or `bun link` inside the repo, which registers secret-env and senv (same CLI, short alias)
 ```
 
-ZCode shell: Plugin Marketplace → Add Marketplace, paste this repo root → Install **secret-env** (hooks.json points at the global command).
+ZCode shell: Plugin Marketplace → Add Marketplace, paste this repo root → Install **secret-env**. Main package only — the marketplace step installs the shell's declarations (hooks.json, plugin.json, skills) but **does not run any package manager**, so it does not bring the `secret-env` command with it. Its hooks invoke the bare commands `secret-env` and `senv-mcp`, resolved through `PATH`; without the global install above the plugin loads but every hook fails. Install the global command first, then the plugin.
 
 opencode shell (V2): shipped as a **separate package** `@foperate/secret-env-opencode`, install it globally **together with the main package** (the plugin's injection hook, the `senv-mcp` MCP server and the skill are all provided by the plugin):
 
@@ -88,12 +89,12 @@ The adapter references the main package through `createRequire` absolute resolut
 
 Note the host does **not** auto-discover a plugin package's own `skills/` directory — the adapter registers the skill via `ctx.skill.transform`, reading `SKILL.md` from the main package; removing the plugin removes skill and MCP with it.
 
-DSH (DeepSeek Harness) bundle: **the main package itself is the DSH bundle** (the root `package.json` declares `dsh.bundle.patch` pointing at the adapter patch); no separate plugin package is needed. The Host plugin provides the bash injection, file/channel guards, the secret-list prompt section, and the `add_secret` tool:
+DSH (DeepSeek Harness) bundle: **the main package itself is the DSH bundle** (the root `package.json` declares `dsh.bundle.patch` pointing at the adapter patch); **no separate plugin package is needed** — unlike opencode, DSH installs the main package alone. The Host plugin provides the bash injection, file/channel guards, the secret-list prompt section, and the `add_secret` tool:
 
 1. Install the Host plugin — inside DSH you can have the agent follow this section (each `plugin_manager` call asks for a one-shot full-file-access approval): `plugin_manager` → `action: install_bundle`, `target` = `@foperate/secret-env@0.3.1` (published package) or the absolute path of this repo root (local development). The profile's `package.json` dependency and `dsh.profile.bundles` record `@foperate/secret-env` afterwards.
 2. Install the skill (so the model knows the secret-env contract):
    ```bash
-   ln -sfn "$PWD/secret-env/skills/secret-env" ~/.dsh/skills/secret-env
+   ln -sfn "$PWD/skills/secret-env" ~/.dsh/skills/secret-env
    ```
 3. Restart DSH — Host plugin code loads at startup, so install/replace both need a restart.
 
@@ -106,6 +107,7 @@ Host integrations upgrade the value-entry step to an in-session card (type the s
 | Host | Channel | Detail |
 | --- | --- | --- |
 | ZCode | Bundled with the plugin: `senv-mcp` (MCP elicitation), auto-registered on install | skill `references/zcode.md` |
+| opencode | Bundled with `@foperate/secret-env-opencode`: `senv-mcp` (MCP elicitation) registered via `ctx.mcp.transform` | skill `references/opencode.md` |
 | DSH | Bundled with the DSH adapter: the `add_secret` tool (host question card) | skill `references/dsh.md` |
 
 Whichever channel is used, the secret value never enters the model context, and results returned to the agent are always sanitized (never contain the value).
@@ -128,7 +130,7 @@ secret-env list
 }
 ```
 
-See [secret-env/secrets.example.json](./secret-env/secrets.example.json) for the template. With an empty config the hook is a pure bypass.
+See [adapters/zcode/secrets.example.json](./adapters/zcode/secrets.example.json) for the template. With an empty config the hook is a pure bypass.
 
 ## Known limitations (honest disclosure)
 
