@@ -14,9 +14,9 @@ import { join } from "node:path";
 import readline from "node:readline";
 import { envNameFromHuman, storeEntry } from "./cli.mjs";
 import { loadConfig } from "./core.mjs";
+import { PROVIDERS, buildEntryOpts, entryCommandText } from "./entry.mjs";
 
 const CONFIG_PATH = join(process.env.HOME ?? homedir(), ".config", "secret-env", "secrets.json");
-const PROVIDERS = ["keychain", "bitwarden", "viking", "onepassword"];
 
 // ---------- i18n：宿主子进程继承 env，读 LC_ALL/LANG 判语言，英文兜底 ----------
 const lang = (() => {
@@ -130,23 +130,6 @@ function validateMeta(args) {
 
 const configEntries = () => { try { return JSON.parse(readFileSync(CONFIG_PATH, "utf8")); } catch { return {}; } };
 
-const buildOpts = (p) => {
-  const o = { name: p.name, provider: p.provider, aliases: p.alias ? p.alias.split(",").map((s) => s.trim()).filter(Boolean) : [], description: p.description || undefined };
-  if (p.provider === "viking") o.path = p.detail;
-  else if (p.provider !== "keychain") o.item = p.detail;
-  return o;
-};
-
-const commandText = (p) => {
-  const o = buildOpts(p);
-  let c = `senv add -n ${JSON.stringify(p.name)} --provider ${o.provider}`;
-  if (o.item) c += ` --item ${JSON.stringify(o.item)}`;
-  if (o.path) c += ` --path ${JSON.stringify(o.path)}`;
-  if (o.aliases.length) c += ` --alias ${o.aliases.map((a) => JSON.stringify(a)).join(" --alias ")}`;
-  if (o.description) c += ` --desc ${JSON.stringify(o.description)}`;
-  return c;
-};
-
 // ---------- add_secret 主流程（ZCode 通道，硬编码宿主已知形态：无掩码 → enum 收值屏一屏制） ----------
 async function handleCall(msg) {
   const args = msg.params?.arguments ?? {};
@@ -161,9 +144,9 @@ async function handleCall(msg) {
       properties: { secret: { type: "string", enum: [T.manualOption], title: "secret" } },
       required: ["secret"],
     });
-    if (!isAccepted(r)) return replyJson(msg.id, { status: r.action ?? "no-answer", command: commandText(picked) });
-    if (r.content.secret === T.manualOption) return replyJson(msg.id, { status: "declined", command: commandText(picked) });
-    const { envName, uri } = await storeEntry(buildOpts(picked), r.content.secret);
+    if (!isAccepted(r)) return replyJson(msg.id, { status: r.action ?? "no-answer", command: entryCommandText(picked) });
+    if (r.content.secret === T.manualOption) return replyJson(msg.id, { status: "declined", command: entryCommandText(picked) });
+    const { envName, uri } = await storeEntry(buildEntryOpts(picked), r.content.secret);
     return replyJson(msg.id, { status: "stored", envName, uri }); // 永不含值
   } catch (e) {
     replyJson(msg.id, { status: "error", message: e.message }, true);

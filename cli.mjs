@@ -5,9 +5,10 @@
 //   secret-env hook zcode       ZCode PreToolUse 钩子协议壳（stdin/stdout JSON）
 // 真值只在：用户终端输入 → provider 存储 → 子进程环境。任何环节不进模型上下文。
 // 运行时中立（与 core.mjs 同规）：bin 须在 Bun/Node/pnpm 任意全局安装下可跑，不用 Bun 专属 API。
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 const argv = process.argv;
 import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeValue, writeEnvFile, shellSingleQuote, keychainBackend, guardPaths } from "./core.mjs";
 
@@ -293,7 +294,14 @@ async function cmdHookZcode() {
 
 // ---------- 入口（仅作为脚本直跑时分发；被 mcp.mjs import 时不执行，避免误入分发分支） ----------
 const [cmd, ...rest] = argv.slice(2);
-const asMain = process.argv[1] && import.meta.url === (await import("node:url")).pathToFileURL(process.argv[1]).href;
+// 两边 realpath 再比：bun link / 全局安装下 argv[1] 是 shim symlink 路径，import.meta.url 是真实文件路径。
+// 直接用字面量比较会让所有 `secret-env <cmd>` 调用静默退出（exit 0，无任何输出）。
+let asMain = false;
+if (process.argv[1]) {
+  try {
+    asMain = realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {}
+}
 if (!asMain) {
   // 被 import：只取导出，不进分发
 } else if (cmd === "add") await cmdAdd(rest);

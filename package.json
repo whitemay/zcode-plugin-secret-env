@@ -28,20 +28,20 @@
     "senv-mcp": "./mcp.mjs"
   },
   "files": [
-    "!adapters/dsh/probe-overlay.yml",
-    "!adapters/dsh/secret-env-probe/",
     "!adapters/tests/",
     "README.md",
     "README.zh-CN.md",
     "adapters/",
     "cli.mjs",
     "core.mjs",
+    "entry.mjs",
     "mcp.mjs",
     "run.mjs",
     "secret-env/secrets.example.json"
   ],
   "scripts": {
-    "test": "bun secret-env/tests/hook.mjs"
+    "test": "bun secret-env/tests/hook.mjs",
+    "test:dsh": "bun adapters/tests/dsh-guard.mjs"
   },
   "engines": {
     "node": ">=18"

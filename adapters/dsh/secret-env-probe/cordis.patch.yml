@@ -1,4 +1,0 @@
-- insert:
-    - id: secret-env-probe
-      name: '@local/secret-env-probe'
-      config: {}
