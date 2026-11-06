@@ -1,5 +1,5 @@
 {
-  "name": "aston-zcode-plugins",
+  "name": "zcode-plugin-secret-env",
   "plugins": [
     {
       "name": "secret-env",
@@ -7,7 +7,7 @@
         "source": "git-subdir",
         "url": "https://github.com/whitemay/zcode-plugin-secret-env.git",
         "path": "adapters/zcode",
-        "ref": "v0.3.1"
+        "ref": "main"
       },
       "version": "0.3.1",
       "description": "Inject secrets from private stores straight into the Bash subprocess environment; model context never sees values. Requires the global command `npm i -g @foperate/secret-env`.",
