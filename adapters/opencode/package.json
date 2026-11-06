@@ -1,6 +1,6 @@
 {
   "name": "@foperate/secret-env-opencode",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "secret-env 的 opencode 宿主插件：拦截 Bash 工具调用，把命令中的密钥引用解值注入子进程环境，并注册 senv-mcp 与 skill。",
   "type": "module",
   "keywords": [
@@ -25,9 +25,7 @@
     "@opencode/plugin": ">=2.0.0"
   },
   "devDependencies": {
-    "@opencode/plugin": "^2.2.5"
-  },
-  "dependencies": {
-    "@foperate/secret-env": "workspace:*"
+    "@opencode/plugin": "^2.2.5",
+    "@types/node": "^26.6.6"
   }
 }

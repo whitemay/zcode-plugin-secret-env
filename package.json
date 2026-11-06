@@ -1,6 +1,6 @@
 {
   "name": "@foperate/secret-env",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "密钥从私有库直达 Bash 子进程环境，模型上下文永不见值。全局 CLI + 多宿主适配（ZCode / opencode / DSH）。",
   "type": "module",
   "keywords": [

@@ -65,8 +65,7 @@ senv add -n "github token" --provider bitwarden --item "GitHub" --alias gh-token
 
 - 若环境存在 `ZCODE_APP_VERSION`（ZCode）→ 读 [references/zcode.md](references/zcode.md)：senv-mcp 的 `add_secret` 两问题流程。
 - 若环境存在 `DSH_PROFILE`（DSH）→ 读 [references/dsh.md](references/dsh.md)：当前仍走第 2 步兜底；插件版 `add_secret` 落地后按该文档更新。
-- 若宿主是 opencode（工具列表里有 senv-mcp 的 `add_secret`）→ 读 [references/opencode.md](references/opencode.md)：senv-mcp 的 `add_secret` 两问题流程。
-- 无法判别宿主或对应 reference 不可用 → 直接走第 2 步兜底。
+- 无法判别宿主或对应 reference 不可用（含 opencode 等其它宿主）→ 直接走第 2 步兜底。
 
 只有 reference 明确说明「该工具可用」时才走表单路径；否则一律兜底。**不要自己发明工具参数，也不要让用户把密钥值发给你。**
 

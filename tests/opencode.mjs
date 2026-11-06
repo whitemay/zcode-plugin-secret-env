@@ -7,12 +7,10 @@ import plugin, { skillAssetPath } from "../adapters/opencode/index.ts";
 let pass = 0, fail = 0;
 const ok = (cond, label) => { cond ? pass++ : (fail++, console.error(`✗ ${label}`)); };
 
-// MCP/Skill 假域：捕获 transform 内容（注册表断言在下方）
-const mcpServers = new Map();
+// Skill 假域：捕获 transform 内容（注册表断言在下方）
 const skills = new Map();
 let before;
 await plugin.setup({
-  mcp: { transform: async (cb) => { cb({ get: (k) => mcpServers.get(k), set: (k, v) => mcpServers.set(k, v) }); return { dispose: async () => {} }; } },
   skill: { transform: async (cb) => { cb({ get: (k) => skills.get(k), add: (s) => skills.set(s.id, s) }); return { dispose: async () => {} }; } },
   tool: { hook: async (name, cb) => { before = cb; return { dispose: async () => {} }; } },
 });
@@ -79,15 +77,7 @@ const readEnvFile = (command) => {
   }
 }
 
-// 9. MCP 注册断言：单个绝对路径命令（多元素会让 opencode 把首个参数当 cwd 去 chdir），不依赖 PATH
-{
-  const cmd = mcpServers.get("secret-env")?.command;
-  ok(cmd?.length === 1, "senv-mcp 命令为单元素");
-  ok(cmd?.[0]?.endsWith("/mcp.mjs") && existsSync(cmd[0]), "senv-mcp 指向主包内真实文件");
-  ok(cmd?.[0]?.startsWith("/"), "senv-mcp 用绝对路径，不依赖 PATH");
-}
-
-// 10. Skill 注册断言：frontmatter 字段与主包内文件真实存在
+// 9. Skill 注册断言：frontmatter 字段与主包内文件真实存在
 {
   const s = skills.get("secret-env");
   const path = skillAssetPath();
