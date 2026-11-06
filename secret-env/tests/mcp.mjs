@@ -1,6 +1,7 @@
 // MCP server 协议冒烟：本测试扮演宿主（MCP client + elicitation 应答端），覆盖
-//   ① 协议骨架 initialize/tools/list；② 第 1 屏 decline 零写入；③ password 支持宿主→直通表单→stored（假密钥链条目，用完即删）；
-//   ④ password 拒绝宿主→无感降级选择屏→command 形态；⑤ stored 结果永不含值。
+//   ① 协议骨架 initialize/tools/list；② 缺 name → status=invalid 零 elicitation；③ password 支持宿主→直通表单→stored
+//   （kdbx 假库）；④ 同名重调 → invalid 零 elicitation；⑤ password 拒绝宿主→无感降级选择屏→command 形态；
+//   ⑥ 选择屏 cancel 不落库；⑦ 结果永不含值。
 // 运行：bun secret-env/tests/mcp.mjs（HOME 重定向到临时目录，隔离真实配置）
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
@@ -85,50 +86,49 @@ send({ jsonrpc: "2.0", method: "notifications/initialized" });
 const list = await request("tools/list", {});
 ok(list.result?.tools?.[0]?.name === "add_secret", "① tools/list 暴露 add_secret");
 
-// ---------- ② 第 1 屏 decline：零写入 ----------
-respond = () => ({ action: "decline", content: {} });
-const r2 = await request("tools/call", { name: "add_secret", arguments: { name: "test x", provider: "keychain" } });
+// ---------- ② 缺 name：status=invalid，零 elicitation、零写入 ----------
+let elicitCount = 0;
+respond = () => { elicitCount++; return { action: "decline", content: {} }; };
+const r2 = await request("tools/call", { name: "add_secret", arguments: { provider: "keychain" } });
 const out2 = JSON.parse(r2.result.content[0].text);
-ok(out2.status === "declined", "② 第 1 屏 decline → status=declined");
-ok(!readFileSync(join(home, ".config", "secret-env", "secrets.json"), "utf8").includes("TEST_X"), "② decline 零写入");
+ok(out2.status === "invalid" && elicitCount === 0, "② 缺 name → invalid 且零表单");
+ok(!readFileSync(join(home, ".config", "secret-env", "secrets.json"), "utf8").includes("TEST_X"), "② invalid 零写入");
 
-// ---------- ③ password 支持宿主：直通输入框 → stored（假密钥链条目） ----------
+// ---------- ③ 收值屏自由输入 → stored（kdbx 假库） ----------
 respond = (params) => {
   const props = params.requestedSchema?.properties ?? {};
-  if (props.value?.format === "password") return { action: "accept", content: { value: "shmpw-test-123" } };
-  if (props.name) return { action: "accept", content: { name: "test x", provider: "keychain", detail: "", alias: "ALT_X", description: "" } };
+  if (props.secret?.enum) return { action: "accept", content: { secret: "shmpw-test-123" } };
   return { action: "decline", content: {} };
 };
-const r3 = await request("tools/call", { name: "add_secret", arguments: {} });
+const r3 = await request("tools/call", { name: "add_secret", arguments: { name: "test x", provider: "keychain", alias: "ALT_X" } });
 const out3 = JSON.parse(r3.result.content[0].text);
-ok(out3.status === "stored" && out3.envName === "TEST_X", "③ password 支持宿主直通 → stored TEST_X");
+ok(out3.status === "stored" && out3.envName === "TEST_X", "③ 收值屏自由输入 → stored TEST_X");
 ok(!JSON.stringify(out3).includes("shmpw-test-123"), "③ 结果不含真值");
 ok(readFileSync(join(home, ".config", "secret-env", "secrets.json"), "utf8").includes("keychain://secret-env-test-x"), "③ secrets.json 已登记");
-cleanupKeychain();
 
-// ---------- ④ password 拒绝宿主：无感降级选择屏 → command 形态 ----------
-respond = (params) => {
-  const props = params.requestedSchema?.properties ?? {};
-  if (props.value?.format === "password") return { error: true }; // 模拟 zod 校验拒绝
-  if (props.mode) return { action: "accept", content: { mode: "command" } };
-  if (props.name) return { action: "accept", content: { name: "test y", provider: "keychain", detail: "", alias: "", description: "" } };
-  return { action: "decline", content: {} };
-};
-const r4 = await request("tools/call", { name: "add_secret", arguments: {} });
+// ---------- ④ 同名重调：invalid，零 elicitation ----------
+elicitCount = 0;
+respond = () => { elicitCount++; return { action: "decline", content: {} }; };
+const r4 = await request("tools/call", { name: "add_secret", arguments: { name: "test x", provider: "keychain" } });
 const out4 = JSON.parse(r4.result.content[0].text);
-ok(out4.status === "command-issued" && out4.command.startsWith("senv add -n"), "④ password 拒绝 → 选择屏 → command 形态");
-ok(out4.command.includes(`--provider keychain`) && out4.command.includes('"test y"'), "④ 命令文本含名字与 provider");
+ok(out4.status === "invalid" && elicitCount === 0, "④ 同名重调 → invalid 且零表单");
 
-// ---------- ⑤ 第 2 屏选择 decline ----------
+// ---------- ⑤ 选中「手工通过命令行输入」→ declined + 附带命令 ----------
 respond = (params) => {
   const props = params.requestedSchema?.properties ?? {};
-  if (props.value?.format === "password") return { error: true };
-  if (props.mode) return { action: "cancel", content: {} };
-  if (props.name) return { action: "accept", content: { name: "test z", provider: "keychain", detail: "", alias: "", description: "" } };
+  if (props.secret?.enum) return { action: "accept", content: { secret: props.secret.enum[0] } };
   return { action: "decline", content: {} };
 };
-const r5 = await request("tools/call", { name: "add_secret", arguments: {} });
-ok(JSON.parse(r5.result.content[0].text).status === "cancel", "⑤ 选择屏 cancel → 不落库");
+const r5 = await request("tools/call", { name: "add_secret", arguments: { name: "test y", provider: "keychain" } });
+const out5 = JSON.parse(r5.result.content[0].text);
+ok(out5.status === "declined" && out5.command.startsWith("senv add -n"), "⑤ 选手工选项 → declined + 命令");
+ok(out5.command.includes(`--provider keychain`) && out5.command.includes('"test y"'), "⑤ 命令文本含名字与 provider");
+
+// ---------- ⑥ 收值屏 ESC/cancel → 也附带命令 ----------
+respond = () => ({ action: "cancel", content: {} });
+const r6 = await request("tools/call", { name: "add_secret", arguments: { name: "test z", provider: "keychain" } });
+const out6 = JSON.parse(r6.result.content[0].text);
+ok(out6.status === "cancel" && out6.command.startsWith("senv add -n"), "⑥ 收值屏 cancel → 不落库且带命令");
 
 proc.stdin.end();
 proc.kill();

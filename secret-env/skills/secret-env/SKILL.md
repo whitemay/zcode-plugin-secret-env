@@ -36,7 +36,23 @@ description: 密钥注入约定——执行需要凭据的 Bash 命令时如何�
 
 每次 session 启动时，SessionStart 钩子会把已配置的**名字清单**（含别名，无真值）自动注入上下文——以那份清单为准。配置本体在 `~/.config/secret-env/secrets.json`（周知名 → {uri, aliases?}，文件里也只有名字和 uri，没有真值）。配置为空时钩子纯旁路、什么都不注入。清单里的 `BW_SESSION` 是基础设施条目（Bitwarden vault 解锁钥匙，bitwarden:// 凭据解析时自动使用），命令中无需引用它。
 
-用户需要接入新密钥库或添加凭据条目时，参见本 skill 目录下 [providers.md](providers.md)（各 provider 的准备与登记步骤）。
+用户需要接入新密钥库或添加凭据条目时，按下面的流程走（详见 [providers.md](providers.md) 各 provider 准备步骤）。
+
+## 会话内登记新凭据（add_secret 两问题流程）
+
+登记新条目时调用 `senv-mcp` 的 `add_secret` 工具。**密钥值由该工具经宿主表单直接向用户收集，永远不经你的上下文——不要试图把值作为参数传入或让用户发给你。** 你的职责只有元数据终审，分两步：
+
+**第 1 步：元数据问答（用宿主自带问答工具，如 AskUserQuestion）**，一次问清三个字段：
+
+- **key 题**：从上下文推断 well-known 候选作为选项（同一凭据的多个周知名都列出，如 Hugging Face → `HF_TOKEN`、`HUGGINGFACE_TOKEN`，标注互为别名）；用户也可自由输入，格式 `KEY, alias1, alias2`（逗号分隔，别名可省）。问题文案须说明该格式。
+- **desc 题**：选项 1=你组织的一段描述，选项 2=不需要描述。文案须警示「描述会进入模型上下文，不得含敏感信息」。
+- **provider 题**：keychain（KeePassXC 库）/ bitwarden / viking / onepassword，无从推断时默认 keychain。
+
+用户选完由**你**把答案解析成定稿：well-known 选项→该名字+已知别名；自由输入→按逗号拆出 name 和别名。
+
+**第 2 步：调用 `add_secret` 传定稿入参**（name 必填；provider/detail/alias/description 可选）。工具随后弹一张收值卡：输入框收密钥（输入时可见但**不进你的上下文**）；用户若选「手工通过命令行输入」或取消，返回里带现成 `command`——转交用户在终端执行即可，**declined 不是失败，是用户选了终端通道**。返回 `status:"invalid"` 时按 message 里的原因（缺名/重名/provider 非法）回到第 1 步重问；`stored` 即收尾。
+
+**通用兜底（任何宿主）**：宿主无问答/表单能力时，元数据在对话里直接问，然后构造完整 `senv add` 命令（含 --provider/--alias/--desc）交给用户在终端执行——命令自带隐藏输入，登记由命令完成。
 
 ## 常见配方
 
