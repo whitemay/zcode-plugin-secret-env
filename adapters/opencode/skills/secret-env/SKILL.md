@@ -63,7 +63,7 @@ senv add -n "github token" --provider bitwarden --item "GitHub" --alias gh-token
 
 **增强分支（仅当宿主满足条件）**：部分宿主能提供表单收值（值同样不进上下文）。先判宿主，再读对应 reference（与本 SKILL.md 同目录的 `references/`）：
 
-- 若环境存在 `ZCODE_APP_VERSION`（ZCode）→ 读 [references/zcode.md](references/zcode.md)：senv-mcp 的 `add_secret` 两问题流程。
+- 若环境存在 `ZCODE_APP_VERSION`（ZCode）→ 读 [references/zcode.md](references/zcode.md)：`senv mcp` 的 `add_secret` 两问题流程。
 - 若环境存在 `DSH_PROFILE`（DSH）→ 读 [references/dsh.md](references/dsh.md)：当前仍走第 2 步兜底；插件版 `add_secret` 落地后按该文档更新。
 - 无法判别宿主或对应 reference 不可用（含 opencode 等其它宿主）→ 直接走第 2 步兜底。
 

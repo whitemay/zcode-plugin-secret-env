@@ -13,7 +13,7 @@ DSH 的收值路径是**插件内部调用问答卡片**，不是 MCP：
      → 工具结果只返回 { status, envName, uri }（脱敏，值不进模型上下文）
 ```
 
-- **不用 MCP elicitation**：DSH 的 MCP 客户端不声明 elicitation 能力；`senv-mcp` 的 `add_secret` 在 DSH 不可用。
+- **不用 MCP elicitation**：DSH 的 MCP 客户端不声明 elicitation 能力；`senv mcp` 的 `add_secret` 在 DSH 不可用。
 - **即使将来经 MCP**：也不会用「提供选项」的 elicitation，而是由程序调用另一个 MCP 工具直接消费输入值。
 - 卡片是无掩码文本输入：值在屏幕上可见，但**不进入模型上下文**；工具结果永远脱敏。
 

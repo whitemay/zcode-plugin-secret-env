@@ -1,6 +1,6 @@
-# ZCode 分支：senv-mcp 的 add_secret（表单收值）
+# ZCode 分支：`senv mcp` 的 add_secret（表单收值）
 
-适用前提：宿主是 ZCode（`ZCODE_APP_VERSION` 存在），且工具列表里有 `add_secret`（senv-mcp，由 ZCode 插件壳 `.zcode-plugin/plugin.json` 的 `mcpServers` 声明）。工具不可用时回到 SKILL.md 的默认兜底（构造 `senv add` 命令交终端）。
+适用前提：宿主是 ZCode（`ZCODE_APP_VERSION` 存在），且工具列表里有 `add_secret`（`senv mcp`，由 ZCode 插件壳 `.zcode-plugin/plugin.json` 的 `mcpServers` 声明）。工具不可用时回到 SKILL.md 的默认兜底（构造 `senv add` 命令交终端）。
 
 ## 流程
 

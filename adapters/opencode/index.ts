@@ -6,7 +6,7 @@
 // （README 安装约定），CLI 不在 PATH 时宁可失败直接报错，不做静默旁路。
 // skill 用包内自带副本（adapters/opencode/skills/secret-env/，与权威位逐字节一致，tests/skill-sync.mjs
 // 校验）——宿主没有"插件包内 skills/ 自动发现"，必须程序化注册。
-// 不注册 senv-mcp（2026-11-06 收口）：opencode 宿主 elicitation 支持未验证，入库统一走
+// 不注册 MCP server（2026-11-06 收口；0.3.3 起 MCP 入口=主包 `senv mcp` 子命令，仅 ZCode 壳注册）：opencode 宿主 elicitation 支持未验证，入库统一走
 // SKILL.md 的终端兜底（senv add 命令）。
 import { Plugin } from "@opencode/plugin";
 import { spawn } from "node:child_process";

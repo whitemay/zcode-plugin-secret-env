@@ -1,6 +1,6 @@
 {
   "name": "@foperate/secret-env-dsh",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "secret-env 的 DeepSeek Harness（DSH）bundle：bash 注入、文件/通道守卫、密钥清单与 add_secret 工具。运行时经 PATH 上的全局 CLI 走宿主协议（protocol 1），本包零依赖。",
   "type": "module",
   "main": "./index.js",

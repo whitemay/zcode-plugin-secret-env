@@ -67,9 +67,9 @@ Global command (the real body). It is **required** for ZCode and opencode — ZC
 npm i -g @foperate/secret-env   # or `bun link` inside the repo, which registers secret-env and senv (same CLI, short alias)
 ```
 
-ZCode shell: Plugin Marketplace → Add Marketplace, paste this repo root → Install **secret-env**. Main package only — the marketplace step installs the shell's declarations (hooks.json, plugin.json, skills) but **does not run any package manager**, so it does not bring the `secret-env` command with it. Its hooks invoke the bare commands `secret-env` and `senv-mcp`, resolved through `PATH`; without the global install above the plugin loads but every hook fails. Install the global command first, then the plugin.
+ZCode shell: Plugin Marketplace → Add Marketplace, paste this repo root → Install **secret-env**. Main package only — the marketplace step installs the shell's declarations (hooks.json, plugin.json, skills) but **does not run any package manager**, so it does not bring the `secret-env` command with it. Its hooks invoke the bare command `secret-env` and MCP registration invokes `senv mcp`, both resolved through `PATH`; without the global install above the plugin loads but every hook fails. Install the global command first, then the plugin.
 
-opencode shell (V2): shipped as a **separate package** `@foperate/secret-env-opencode`, install it globally **together with the main package** (the plugin only forwards interception to the CLI and registers the skill; no `senv-mcp` — in-session registration falls back to the `senv add` terminal command; the file guard for Read/Write/Edit tools is not implemented yet — do not let the agent touch secrets.json/vault.kdbx directly):
+opencode shell (V2): shipped as a **separate package** `@foperate/secret-env-opencode`, install it globally **together with the main package** (the plugin only forwards interception to the CLI and registers the skill; no `senv mcp` — in-session registration falls back to the `senv add` terminal command; the file guard for Read/Write/Edit tools is not implemented yet — do not let the agent touch secrets.json/vault.kdbx directly):
 
 ```bash
 bun install -g @foperate/secret-env @foperate/secret-env-opencode
@@ -83,9 +83,9 @@ bun install -g @foperate/secret-env @foperate/secret-env-opencode
 Two constraints shape this setup:
 
 - **The `plugin` array takes a package name only.** opencode rejects `@scope/pkg/subpath` specs — `npa` parses the subpath, the spec no longer counts as a registry version/range/tag, and opencode falls through to an npm install of a bogus path (`/Users/<you>/@scope/pkg/subpath/package.json`, `NpmInstallFailedError`). Subpath exports stay useful for programmatic `import`, not for this config key.
-- **Install both packages globally.** The plugin declares the main package as a dependency, so installing it pulls the main package in — but a transitively installed package's `bin` entries are not linked into `~/.bun/bin` or `~/.npm/bin`, so `senv` / `senv-mcp` would not be on `PATH`. Installing both at the top level links them.
+- **Install both packages globally.** The plugin declares the main package as a dependency, so installing it pulls the main package in — but a transitively installed package's `bin` entries are not linked into `~/.bun/bin` or `~/.npm/bin`, so `senv` (and the `senv mcp` subcommand) would not be on `PATH`. Installing both at the top level links them.
 
-The adapter references the main package through `createRequire` absolute resolution (core, `senv-mcp`, and the skill asset), so it does not depend on `PATH`. Local development: `bun install` at the repo root establishes the workspace link, then point the plugin array at the adapter directory.
+The adapter references the main package through `createRequire` absolute resolution (core, mcp.mjs, and the skill asset), so it does not depend on `PATH`. Local development: `bun install` at the repo root establishes the workspace link, then point the plugin array at the adapter directory.
 
 Note the host does **not** auto-discover a plugin package's own `skills/` directory — the adapter registers the skill via `ctx.skill.transform`, reading `SKILL.md` from the main package; removing the plugin removes skill and MCP with it.
 
@@ -107,7 +107,7 @@ Host integrations upgrade the value-entry step to an in-session card (type the s
 
 | Host | Channel | Detail |
 | --- | --- | --- |
-| ZCode | Bundled with the plugin: `senv-mcp` (MCP elicitation), auto-registered on install | skill `references/zcode.md` |
+| ZCode | Bundled with the plugin: `senv mcp` subcommand (MCP elicitation), auto-registered on install | skill `references/zcode.md` |
 | opencode | Not registered (opencode host elicitation support unverified) — registration falls back to the `senv add` terminal command | n/a |
 | DSH | Bundled with the DSH adapter: the `add_secret` tool (host question card) | skill `references/dsh.md` |
 

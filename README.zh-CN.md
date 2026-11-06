@@ -67,9 +67,9 @@ srun --all -- ./legacy-tool.sh           # 注入全部已配置条目（供确�
 npm i -g @foperate/secret-env   # 或在仓库内 bun link，注册 secret-env 与 senv 双命令名（同一 CLI，短别名）
 ```
 
-ZCode 壳：Plugin Marketplace → Add Marketplace 粘贴本仓库根 → Install **secret-env**。只需主包——marketplace 安装的是壳的声明文件（hooks.json、plugin.json、skills），**不执行任何包管理器**，所以不会带来 `secret-env` 命令。其 hooks 调用裸命令 `secret-env` 与 `senv-mcp`，靠 `PATH` 解析；没有上面的全局安装，插件能装上但所有 hook 全部失败。**先装全局命令，再装插件。**
+ZCode 壳：Plugin Marketplace → Add Marketplace 粘贴本仓库根 → Install **secret-env**。只需主包——marketplace 安装的是壳的声明文件（hooks.json、plugin.json、skills），**不执行任何包管理器**，所以不会带来 `secret-env` 命令。其 hooks 调用裸命令 `secret-env`、MCP 注册调 `senv mcp`（子命令形态），靠 `PATH` 解析；没有上面的全局安装，插件能装上但所有 hook 全部失败。**先装全局命令，再装插件。**
 
-opencode 壳（V2）：以**独立包** `@foperate/secret-env-opencode` 分发，需与主包**一起全局安装**（插件只做拦截转发与 skill 注册，注入真身是全局 CLI；`senv-mcp` 不注册，入库走 `senv add` 终端兜底；读写工具（Read/Write/Edit）的文件守卫尚未实现——勿让 agent 直接触碰 secrets.json/vault.kdbx）：
+opencode 壳（V2）：以**独立包** `@foperate/secret-env-opencode` 分发，需与主包**一起全局安装**（插件只做拦截转发与 skill 注册，注入真身是全局 CLI；`senv mcp` 不注册，入库走 `senv add` 终端兜底；读写工具（Read/Write/Edit）的文件守卫尚未实现——勿让 agent 直接触碰 secrets.json/vault.kdbx）：
 
 ```bash
 bun install -g @foperate/secret-env @foperate/secret-env-opencode
@@ -83,9 +83,9 @@ bun install -g @foperate/secret-env @foperate/secret-env-opencode
 两条约束决定了这个装法：
 
 - **`plugin` 数组只认包名。** opencode 拒绝 `@scope/pkg/subpath` 形式的 spec——`npa` 解析出子路径后不再算 registry 的 version/range/tag，opencode 转而去 npm 装一个假路径（`/Users/<你>/@scope/pkg/subpath/package.json`，报 `NpmInstallFailedError`）。子路径 exports 仍可用于程序化 `import`，但不适用于这个配置键。
-- **两个包都要全局装。** 插件把主包声明为依赖，装插件会连带装上主包——但作为传递依赖安装时，其 `bin` 不会链进 `~/.bun/bin` 或 `~/.npm/bin`，导致 `senv` / `senv-mcp` 不在 `PATH` 上。两个都装在顶层才会建立链接。
+- **两个包都要全局装。** 插件把主包声明为依赖，装插件会连带装上主包——但作为传递依赖安装时，其 `bin` 不会链进 `~/.bun/bin` 或 `~/.npm/bin`，导致 `senv`（含 `senv mcp` 子命令）不在 `PATH` 上。两个都装在顶层才会建立链接。
 
-适配器通过 `createRequire` 解析主包绝对路径（core、`senv-mcp`、skill 资产），不依赖 `PATH`。本地开发：仓库根 `bun install` 建立 workspace 链接，再把 `plugin` 数组指向适配器目录。
+适配器通过 `createRequire` 解析主包绝对路径（core、mcp.mjs、skill 资产），不依赖 `PATH`。本地开发：仓库根 `bun install` 建立 workspace 链接，再把 `plugin` 数组指向适配器目录。
 
 注意宿主**不会**自动发现插件包内的 `skills/` 目录——skill 由适配器经 `ctx.skill.transform` 从主包读取 `SKILL.md` 程序化注册；删插件即连带 skill 与 MCP 一起消失。
 
@@ -108,7 +108,7 @@ DSH（DeepSeek Harness）bundle：**独立包 `@foperate/secret-env-dsh`**（零
 
 | 宿主 | 通道 | 详情 |
 | --- | --- | --- |
-| ZCode | 插件自带：`senv-mcp`（MCP elicitation），安装即自动注册 | skill `references/zcode.md` |
+| ZCode | 插件自带：`senv mcp` 子命令（MCP elicitation），安装即自动注册 | skill `references/zcode.md` |
 | opencode | 不注册（opencode 宿主 elicitation 支持未验证）——入库走 SKILL.md 的 `senv add` 终端兜底 | 无 |
 | DSH | DSH 适配器自带：`add_secret` 工具（宿主问答卡片） | skill `references/dsh.md` |
 

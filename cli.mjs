@@ -420,7 +420,11 @@ else if (cmd === "hook" && rest[0] === "zcode") await cmdHookZcode();
 else if (cmd === "info") cmdInfo();
 else if (cmd === "inject") await cmdInject();
 else if (cmd === "store") await cmdStore();
+// 这里不能 await：mcp.mjs 反向 import 本文件（storeEntry/envNameFromHuman），await 会构成 ESM 循环死锁
+// ——Node 报 unsettled top-level await 并 exit 13（Bun 侥幸能跑，真实安装形态的 shebang 是 node）。
+// 不 await 时本模块先求值完毕，mcp.mjs 再启动；进程由 stdin readline 保活。
+else if (cmd === "mcp") import("./mcp.mjs");
 else {
-  console.error("用法：secret-env add|remove|list [--inject]|hook zcode|info|inject|store");
+  console.error("用法：secret-env add|remove|list [--inject]|hook zcode|info|inject|store|mcp");
   process.exit(cmd ? 2 : 0);
 }

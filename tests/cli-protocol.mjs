@@ -193,6 +193,18 @@ try {
     const r = runCli("store", { protocol: 99, name: "x", value: "y" });
     check("store 协议不匹配 → exit 3", r.exit === 3 && parse(r)?.code === "protocol", `exit=${r.exit}`);
   }
+
+  // ---------- ④ senv mcp 子命令入口 ----------
+  // 用 node 跑（真实安装形态的 shebang = node）：mcp.mjs 反向 import cli.mjs，
+  // 若 cli.mjs 用 await import 会构成 ESM 循环死锁 → node exit 13（曾发生的回归）。
+  console.log("④ senv mcp（node 运行时）");
+  {
+    const init = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } });
+    const p = Bun.spawnSync(["bash", "-c", `printf '%s\\n' ${JSON.stringify(init)} | HOME='${HOME}' node '${CLI}' mcp`], { stdout: "pipe", stderr: "pipe" });
+    const out = parse({ stdout: p.stdout.toString().trim(), stderr: p.stderr.toString().trim() });
+    check("mcp 入口 exit 0", p.exitCode === 0, `exit=${p.exitCode} stderr=${p.stderr.toString().slice(0, 200)}`);
+    check("initialize 回 serverInfo", out?.result?.serverInfo?.name === "secret-env", JSON.stringify(out).slice(0, 120));
+  }
 } finally {
   rmSync(HOME, { recursive: true, force: true });
 }

@@ -1,6 +1,6 @@
 {
   "name": "secret-env",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "Inject secrets from private stores straight into Bash subprocess env; model context only ever sees placeholders and variable names.",
   "author": { "name": "aston" },
   "hooks": "./hooks/hooks.json",
@@ -8,7 +8,8 @@
   "mcpServers": {
     "secret-env": {
       "type": "stdio",
-      "command": "senv-mcp"
+      "command": "senv",
+      "args": ["mcp"]
     }
   }
 }

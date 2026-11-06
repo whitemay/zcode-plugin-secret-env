@@ -158,7 +158,7 @@ provider 选项主名已改 keychain（2026-11-05）：与 scheme 对齐，「sy
 
 | 宿主 | 通道 | 隔离机制 |
 |---|---|---|
-| ZCode | MCP elicitation（senv-mcp 的 add_secret） | 值→宿主→server 进程，模型只见脱敏 result |
+| ZCode | MCP elicitation（senv mcp（`senv mcp` 子命令，0.3.3 起并入主 CLI） 的 add_secret） | 值→宿主→server 进程，模型只见脱敏 result |
 | DSH | 插件 add_secret 工具（ctx.userQuestions 卡片，答案只回插件代码） | 值→插件进程→storeEntry，模型只见脱敏 result |
 | 其它一切 | 终端 `senv add` 命令（agent 构造完整命令交用户执行，隐藏输入） | 值只在终端进程 |
 
@@ -184,7 +184,7 @@ opencode 的 `plugin` 数组只接受 registry 包名（可带 version/range/tag
 
 结论：opencode 适配器拆为独立包 `@foperate/secret-env-opencode`，物理位置仍是 `adapters/opencode/`（npm workspace 成员，目录即包边界，不搬目录）。
 
-依赖与安装：插件包 `dependencies` 声明 `@foperate/secret-env: "workspace:*"`，用户需**同时全局安装两个包**（`bun install -g @foperate/secret-env @foperate/secret-env-opencode`）。只装插件包时主包虽会被连带装上，但作为传递依赖其 `bin` 不进 `~/.bun/bin` / `~/.npm/bin`，`senv` / `senv-mcp` 不在 `PATH` 上。
+依赖与安装：插件包 `dependencies` 声明 `@foperate/secret-env: "workspace:*"`，用户需**同时全局安装两个包**（`bun install -g @foperate/secret-env @foperate/secret-env-opencode`）。只装插件包时主包虽会被连带装上，但作为传递依赖其 `bin` 不进 `~/.bun/bin` / `~/.npm/bin`，`senv`（0.3.3 起 `senv-mcp` bin 已删除，MCP 入口=`senv mcp` 子命令）不在 `PATH` 上。
 
 跨包引用：适配器对主包的 core 与 `mcp.mjs` 走 `createRequire` 绝对解析，MCP 命令用单元素绝对路径（`[process.execPath, <mcp.mjs>]` 会让 opencode 把首个参数当 cwd 去 chdir，报 ENOTDIR），不依赖 `PATH`。**skill 不做跨包引用**：插件包自带副本 `adapters/opencode/skills/secret-env/`（随 npm 包发布），由 `tests/skill-sync.mjs` 与权威副本逐字节校验。
 
