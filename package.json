@@ -27,6 +27,15 @@
     "srun": "./run.mjs",
     "senv-mcp": "./mcp.mjs"
   },
+  "exports": {
+    "./core.mjs": "./core.mjs",
+    "./cli.mjs": "./cli.mjs",
+    "./entry.mjs": "./entry.mjs",
+    "./mcp.mjs": "./mcp.mjs",
+    "./run.mjs": "./run.mjs",
+    "./dsh": "./adapters/dsh/secret-env/index.js",
+    "./package.json": "./package.json"
+  },
   "files": [
     "!adapters/tests/",
     "README.md",
@@ -34,20 +43,31 @@
     "adapters/",
     "cli.mjs",
     "core.mjs",
+    "docs/INSTALL-DSH.md",
     "entry.mjs",
     "mcp.mjs",
     "run.mjs",
-    "secret-env/secrets.example.json"
+    "secret-env/secrets.example.json",
+    "secret-env/skills/"
   ],
   "scripts": {
     "test": "bun secret-env/tests/hook.mjs",
-    "test:dsh": "bun adapters/tests/dsh-guard.mjs"
+    "test:dsh": "bun adapters/tests/dsh-guard.mjs",
+    "test:opencode": "bun adapters/tests/opencode.mjs"
   },
   "engines": {
     "node": ">=18"
   },
+  "dsh": {
+    "bundle": {
+      "patch": "./adapters/dsh/secret-env/cordis.patch.yml"
+    }
+  },
   "dependencies": {
     "hash-wasm": "^4.12.0",
     "kdbxweb": "^2.1.1"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "^2.2.5"
   }
 }

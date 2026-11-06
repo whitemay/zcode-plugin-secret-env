@@ -1,9 +1,9 @@
-// secret-env opencode 适配器（V2 插件 API）。
+// secret-env opencode 适配器（V2 插件 API；V1 兼容暂不做，需要时用 server() 双导出形态）。
 // 安装：复制本文件到 ~/.config/opencode/plugins/secret-env.ts（或项目 .opencode/plugins/）。
-// 机制：tool.execute.before 拦截 bash 工具，扫描命令文本中的密钥引用，
-// 解值写入 0600 env 文件，output.args.command 加 source 前缀——与 ZCode 钩子同一核心（core.mjs）。
+// 机制：ctx.tool.hook("execute.before") 拦截 bash/shell 工具，扫描命令文本中的密钥引用，
+// 解值写入 0600 env 文件，event.input.command 加 source 前缀——与 ZCode 钩子同一核心（core.mjs）。
 // core.mjs 定位：bun link 注册的 npm 包优先（随仓库源码生效），仓库直落路径兜底。
-import type { Plugin } from "@opencode-ai/plugin";
+import { Plugin } from "@opencode/plugin";
 
 type Core = typeof import("./../core.mjs");
 
@@ -15,15 +15,17 @@ async function loadCore(): Promise<Core> {
   }
 }
 
-export const SecretEnvPlugin: Plugin = async () => {
-  const core = await loadCore();
+export default Plugin.define({
+  id: "secret-env",
+  async setup(ctx) {
+    const core = await loadCore();
 
-  return {
-    "tool.execute.before": async (input, output) => {
-      // opencode 内置 shell 工具名为 bash（小写）
-      if (input.tool !== "bash") return;
-      const command: string = output.args?.command ?? "";
-      if (!command) return;
+    await ctx.tool.hook("execute.before", async (event) => {
+      // opencode 内置 shell 工具名（bash 为当前名，shell 并列防御）
+      if (event.tool !== "bash" && event.tool !== "shell") return;
+      const input = event.input as { command?: string } | undefined;
+      if (!input?.command) return;
+      const command = input.command;
 
       const deny = (reason: string): never => {
         throw new Error(`secret-env：${reason}`);
@@ -34,7 +36,6 @@ export const SecretEnvPlugin: Plugin = async () => {
 
       core.cleanStale();
 
-      const sessionId = (input as { sessionID?: string }).sessionID ?? "opencode";
       const tokens = core.scanRefs(command, config, deny);
       if (tokens.length === 0) return; // 无引用 = 零注入
 
@@ -61,8 +62,8 @@ export const SecretEnvPlugin: Plugin = async () => {
         exportNames.set(t.token.replace(/^\$\{?/, "").replace(/\}$/, ""), t.name);
       }
 
-      const envFile = core.writeEnvFile(sessionId, exportNames, values);
-      output.args.command = `. ${core.shellSingleQuote(envFile)}; ${command}`;
-    },
-  };
-};
+      const envFile = core.writeEnvFile(event.sessionID, exportNames, values);
+      input.command = `. ${core.shellSingleQuote(envFile)}; ${command}`;
+    });
+  },
+});

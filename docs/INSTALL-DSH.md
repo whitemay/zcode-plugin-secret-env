@@ -5,8 +5,8 @@
 ## 前置
 
 - 在 DSH 会话中执行。
+- **主包是插件本体**：`@foperate/secret-env` 的根 `package.json` 声明了 `dsh.bundle.patch`，安装主包即安装 DSH 插件（适配器在包内 `adapters/dsh/secret-env/`，patch 通过 exports 的 `@foperate/secret-env/dsh` 解析）。不需要独立的 DSH 插件包。
 - 仓库路径：`/Users/aston/github/zcode-plugin-secret-env`（下文用 `<repo>` 表示绝对路径）。
-- 目标 profile：当前 DSH 使用的 profile（通常是 `desktop`）。
 
 ## 1. 安装 Host 插件（bundle）
 
@@ -14,14 +14,14 @@
 
 ```
 action: install_bundle
-target: <repo>/adapters/dsh/secret-env
+target: @foperate/secret-env@0.3.0        # 已发布包；本地开发用 <repo>
 ```
 
 要点：
 
 - 每次调用会请求一次完整文件访问审批，等用户批准。
 - 成功返回里看 `application` 与 `warnings`；`warnings` 非空时如实转述，不要重复安装制造重复条目。
-- 成功后 profile 的 `package.json` 依赖与 `dsh.profile.bundles` 会记录 `@local/secret-env`。
+- 成功后 profile 的 `package.json` 依赖与 `dsh.profile.bundles` 会记录 `@foperate/secret-env`。
 
 ## 2. 安装 skill
 
@@ -46,12 +46,12 @@ Host 插件代码在 DSH 启动时加载，安装或替换后都必须重启。*
 
 ## 更新
 
-- 改 `<repo>/adapters/dsh/secret-env/` 后重启 DSH。
+- 升级主包（或本地开发时改 `adapters/dsh/secret-env/`）后重启 DSH。
 - skill 是 symlink，改 `secret-env/skills/secret-env/` 后无需重启。
 
 ## 卸载
 
-1. `plugin_manager`：`action: remove_bundle`，`target: @local/secret-env`
+1. `plugin_manager`：`action: remove_bundle`，`target: @foperate/secret-env`
 2. 删除 skill 链接：`rm ~/.dsh/skills/secret-env`（只删链接，不动仓库）
 
 ## 排错

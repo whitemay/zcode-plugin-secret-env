@@ -169,3 +169,11 @@ ZCode 已知宿主形态（无 password 掩码），故**不做运行时能力�
 - **entry.mjs（根，宿主无关）**：PROVIDERS/buildEntryOpts/entryCommandText 三端共用；cli.mjs storeEntry 仍是落库唯一真源。DSH 插件内的 entry.mjs 只放宿主专属文案与卡片答案解释（custom/selected 语义），re-export 共用层。
 - **曾议方案存档**：① senv-mcp 加第二个 tool（store_secret，capability 门控按 client 是否声明 elicitation 区分）专供 DSH 程序化调用——可行，但 DSH 侧要多养一个 node 子进程（PATH/运行时坑有前科）且隔离增益为零（值本就在插件进程），弃；② DSH wrapper 拦截 `senv add` 命令文本升级为卡片——触发物可与兜底统一，但命令文本解析脆，改为插件注册独立 add_secret 工具（结构化入参），已实现。
 - **MCP 定位**：MCP（elicitation）只是 ZCode 的实现通道，不是项目级能力——README 按「会话内登记」能力书写，MCP 降为宿主集成细节；设计论证留本节。
+
+## 11. 分发：主包兼任 DSH bundle（2026-11-06 定案，0.3.0 落地）
+
+0.3.0 起 DSH 不再有独立插件包：根 `package.json` 声明 `dsh.bundle.patch` 指向 `adapters/dsh/secret-env/cordis.patch.yml`，patch 的 insert name 为 `@foperate/secret-env/dsh`（由根 `exports` 暴露），`plugin_manager install_bundle` 的 target 直接是主包（npm spec 或本地仓库根）。
+
+理由：插件是主包的宿主适配层——注入与入库都直接 import 主包代码，终端兜底命令也假定 `senv` 存在；拆独立包只会多一次版本同步，不减少任何前置。主包被 pnpm 安装为真实副本（本地开发为 link），同时规避了「link 模式下插件从真实路径解析不到 profile 依赖」的坑（该坑曾导致 `add_secret` 静默不注册）。
+
+代价与边界：DSH profile 会安装整个 CLI 包（含 bin 与 kdbx 依赖），可接受——主包本来就是前置。ZCode 仍走仓库/本地 marketplace（marketplace 不认 npm spec），opencode 仍复制适配器文件；三端版本天然一致。
