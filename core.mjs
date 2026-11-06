@@ -7,6 +7,9 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 
+// 宿主协议版本（info/inject/store 的 stdin/stdout JSON 契约）：宿主适配器据此握手，不匹配即拒绝。
+export const PROTOCOL_VERSION = 1;
+
 export const ENV_DIR = join(tmpdir(), "secret-env-injections");
 
 // vault 库路径是约定不是配置（2026-11-05 拍板）：恒为 ~/.config/secret-env/vault.kdbx。
@@ -19,10 +22,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // 加载顺序：~/.config/secret-env/secrets.json（稳定路径，marketplace refresh 不覆盖）→ 插件根（兼容旧位）。
 // 两处合并（稳定路径优先，同名后者不覆盖前者）：凭据映射不随插件版本走——安装缓存是快照，refresh 即覆盖。
 // "$" 开头的顶层键是保留键（后端配置），不进凭据映射；当前保留键："$keychain"。
+export function configPaths() {
+  return [join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json"), join(HERE, "secret-env", "secrets.json")];
+}
+
 export function loadConfig() {
-  const candidates = [join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json"), join(HERE, "secret-env", "secrets.json")];
   const map = new Map(); // 别名/主键 → {canonical, uri}
-  for (const path of candidates) {
+  for (const path of configPaths()) {
     try {
       const raw = JSON.parse(readFileSync(path, "utf8"));
       for (const [name, def] of Object.entries(raw)) {

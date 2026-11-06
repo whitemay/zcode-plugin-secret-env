@@ -57,8 +57,9 @@
     "test:dsh": "bun tests/dsh-guard.mjs",
     "test:opencode": "bun tests/opencode.mjs",
     "test:skill-sync": "bun tests/skill-sync.mjs",
+    "test:protocol": "bun tests/cli-protocol.mjs",
     "skill:sync": "bun tests/skill-sync-copy.mjs",
-    "test:all": "bun tests/skill-sync.mjs && bun adapters/zcode/tests/hook.mjs && bun tests/dsh-guard.mjs && bun tests/opencode.mjs"
+    "test:all": "bun tests/skill-sync.mjs && bun adapters/zcode/tests/hook.mjs && bun tests/dsh-guard.mjs && bun tests/opencode.mjs && bun tests/cli-protocol.mjs"
   },
   "engines": {
     "node": ">=18"

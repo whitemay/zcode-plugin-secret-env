@@ -1,16 +1,18 @@
 #!/usr/bin/env node
-// secret-env 全局 CLI。与宿主无关的三个入口：
+// secret-env 全局 CLI。与宿主无关的入口：
 //   secret-env add <NAME> ...   用户终端执行：交互收值（隐藏输入）→ 入库 → 登记 secrets.json
 //   secret-env list             打印名字+别名+描述清单（无真值）
 //   secret-env hook zcode       ZCode PreToolUse 钩子协议壳（stdin/stdout JSON）
+//   secret-env info|inject|store  宿主适配器协议（protocol 1）：stdout 严格一行 JSON，绝不回凭据值
 // 真值只在：用户终端输入 → provider 存储 → 子进程环境。任何环节不进模型上下文。
 // 运行时中立（与 core.mjs 同规）：bin 须在 Bun/Node/pnpm 任意全局安装下可跑，不用 Bun 专属 API。
-import { appendFileSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 const argv = process.argv;
-import { loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeValue, writeEnvFile, shellSingleQuote, keychainBackend, guardPaths } from "./core.mjs";
+import { PROTOCOL_VERSION, configPaths, loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeValue, writeEnvFile, shellSingleQuote, keychainBackend, guardPaths } from "./core.mjs";
+import { PROVIDERS, buildEntryOpts } from "./entry.mjs";
 
 const LOG = "/tmp/zcode-secret-env.log";
 const CONFIG_PATH = join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json");
@@ -181,15 +183,20 @@ async function cmdRemove(args) {
   console.log(`映射已删除：${name}。下个 session 的清单注入自动更新。`);
 }
 
-function cmdList() {
-  const config = loadConfig();
-  if (config.size === 0) { console.log("(空)"); return; }
+// 配置 Map → 主键清单（别名归并到 canonical 下）：list / list --inject / info 三处共用。
+function canonicalEntries(config) {
   const entries = new Map();
   for (const [name, info] of config) {
     if (info.canonical === name) entries.set(name, { aliases: [], description: info.description });
     else entries.get(info.canonical)?.aliases.push(name);
   }
-  for (const [name, { aliases, description }] of entries) {
+  return entries;
+}
+
+function cmdList() {
+  const config = loadConfig();
+  if (config.size === 0) { console.log("(空)"); return; }
+  for (const [name, { aliases, description }] of canonicalEntries(config)) {
     console.log(`${name}${aliases.length ? `（别名：${aliases.join("、")}）` : ""}${description ? `：${description}` : ""}`);
   }
 }
@@ -198,14 +205,9 @@ function cmdList() {
 function cmdInjectList() {
   const config = loadConfig();
   if (config.size === 0) process.exit(0);
-  const entries = new Map();
-  for (const [name, info] of config) {
-    if (info.canonical === name) entries.set(name, { aliases: [], description: info.description });
-    else entries.get(info.canonical)?.aliases.push(name);
-  }
   const lines = [
     "已配置密钥（secret-env，值永不出现在上下文，命令中显式引用即可注入子进程环境）：",
-    ...[...entries].map(([name, { aliases, description }]) => {
+    ...[...canonicalEntries(config)].map(([name, { aliases, description }]) => {
       let line = `- ${name}`;
       if (aliases.length) line += `（别名：${aliases.join("、")}）`;
       if (description) line += `：${description}`;
@@ -215,6 +217,43 @@ function cmdInjectList() {
     "详见 secret-env skill。",
   ];
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } }));
+}
+
+// ---------- 注入主体（hook zcode 与宿主协议 inject 共用）：扫描 → 解析 → 写 env 文件 → 返回新命令 ----------
+// 错误一律 throw（理由由宿主转成拒绝）；无配置/无引用时原样返回（envFile = null）。
+export async function buildInjection(command, sessionId) {
+  const config = loadConfig();
+  if (config.size === 0) return { command, envFile: null }; // 未配置 = 纯旁路
+  cleanStale();
+  const tokens = scanRefs(command, config, (reason) => { throw new Error(reason); });
+  if (tokens.length === 0) return { command, envFile: null }; // 无引用 = 零注入，无可倾泻
+
+  const bad = tokens.filter((t) => t.inSingle);
+  if (bad.length) {
+    throw new Error(`secret-env：引用位于单引号内不会被展开（${[...new Set(bad.map((t) => t.token))].join("、")}）。请改用双引号包裹，例如 "$GH_TOKEN"。`);
+  }
+  if (isDumpCommand(command)) {
+    throw new Error("secret-env：命令同时含密钥引用与环境倾泻命令（env/printenv/set/export），会打印注入值。请把倾泻意图从命令中移除。");
+  }
+
+  const values = new Map();
+  for (const name of [...new Set(tokens.map((t) => t.name))]) {
+    const info = config.get(name);
+    try {
+      values.set(name, await resolveValue(info.uri, config));
+    } catch (e) {
+      throw new Error(`secret-env：解析 ${name}（${info.uri}）失败：${e.message}`);
+    }
+  }
+
+  const exportNames = new Map();
+  for (const t of tokens) {
+    exportNames.set(t.token.replace(/^\$\{?/, "").replace(/\}$/, ""), t.name); // 按引用原名 export
+  }
+
+  const envFile = writeEnvFile(sessionId, exportNames, values);
+  log(`inject session=${sessionId} names=${[...exportNames.keys()].join(",")} file=${envFile}`);
+  return { command: `. ${shellSingleQuote(envFile)}; ${command}`, envFile };
 }
 
 // ---------- hook zcode：ZCode PreToolUse 协议壳 ----------
@@ -244,52 +283,109 @@ async function cmdHookZcode() {
   const command = payload?.tool_input?.command ?? "";
   if (!command) allow();
 
-  const config = loadConfig();
-  if (config.size === 0) allow(); // 未配置 = 纯旁路
-
   // 文件守卫（Bash）：命令文本提及配置/密钥库文件即拒——这些文件含口令明文与全部映射，
   // 且这类命令通常不含 $VAR 引用，注入扫描盯不到它们
-  const guardHit = guardPaths(config).find((f) => command.includes(f));
+  const guardHit = guardPaths(loadConfig()).find((f) => command.includes(f));
   if (guardHit) {
     deny(`secret-env：命令涉及受保护文件（片段「${guardHit}」）——secrets.json/vault.kdbx 含 master 口令明文与全部凭据映射，禁止 Agent 读写。配置维护请在你的终端运行 secret-env add/remove，或亲手编辑。`);
   }
 
-  cleanStale();
-
-  const sessionId = payload?.session_id ?? "";
-  const tokens = scanRefs(command, config, deny);
-  if (tokens.length === 0) allow(); // 无引用 = 零注入，无可倾泻
-
-  const bad = tokens.filter((t) => t.inSingle);
-  if (bad.length) {
-    deny(`secret-env：引用位于单引号内不会被展开（${[...new Set(bad.map((t) => t.token))].join("、")}）。请改用双引号包裹，例如 "$GH_TOKEN"。`);
+  let result;
+  try {
+    result = await buildInjection(command, payload?.session_id ?? "");
+  } catch (e) {
+    deny(e.message);
   }
-  if (isDumpCommand(command)) {
-    deny(`secret-env：命令同时含密钥引用与环境倾泻命令（env/printenv/set/export），会打印注入值。请把倾泻意图从命令中移除。`);
+  if (!result.envFile) allow();
+  allow({ ...payload.tool_input, command: result.command });
+}
+
+// ---------- 宿主协议（protocol 1）：info / inject / store ----------
+// 宿主适配器（DSH）以子进程调用；stdout 严格一行 JSON，任何响应都不含凭据值。
+// 退出码：0 成功；2 业务拒绝/参数错误（JSON 带 error 或 status）；3 协议版本不匹配。
+const protocolOut = (payload, code = 0) => { console.log(JSON.stringify(payload)); process.exit(code); };
+const protocolDeny = (code, message, extra) => protocolOut({ ...extra, error: message, code }, 2);
+
+async function readStdinJson() {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { return null; }
+}
+
+// 协议版本握手：所有命令共用
+function requireProtocol(payload) {
+  if (!payload || typeof payload !== "object") protocolDeny("bad-payload", "stdin 需要 JSON 对象");
+  if (payload.protocol !== PROTOCOL_VERSION) {
+    protocolOut({ error: `协议版本不匹配：期望 ${PROTOCOL_VERSION}，收到 ${payload.protocol ?? "无"}`, code: "protocol" }, 3);
   }
+}
 
-  const canonicalNames = [...new Set(tokens.map((t) => t.name))];
-  const values = new Map();
-  for (const name of canonicalNames) {
-    const info = config.get(name);
-    try {
-      values.set(name, await resolveValue(info.uri, config));
-    } catch (e) {
-      deny(`secret-env：解析 ${name}（${info.uri}）失败：${e.message}`);
-    }
+function packageVersion() {
+  try { return JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version ?? "0.0.0"; }
+  catch { return "0.0.0"; }
+}
+
+// 清单 + 规则 + 版本：宿主启动时拉一次，配置变更（configMtime）后再拉
+function cmdInfo() {
+  const config = loadConfig();
+  let configMtime = 0;
+  for (const path of configPaths()) {
+    try { configMtime = Math.max(configMtime, statSync(path).mtimeMs); } catch {}
   }
+  protocolOut({
+    protocol: PROTOCOL_VERSION,
+    version: packageVersion(),
+    configMtime,
+    entries: [...canonicalEntries(config)].map(([name, { aliases, description }]) => ({
+      name,
+      aliases,
+      ...(description ? { description } : {}),
+    })),
+    rules: { guardPaths: guardPaths(config) },
+    providers: PROVIDERS,
+  });
+}
 
-  const exportNames = new Map();
-  for (const t of tokens) {
-    const refName = t.token.replace(/^\$\{?/, "").replace(/\}$/, "");
-    exportNames.set(refName, t.name);
+async function cmdInject() {
+  const payload = await readStdinJson();
+  requireProtocol(payload);
+  const command = typeof payload.command === "string" ? payload.command : "";
+  if (!command) protocolDeny("bad-command", "command 不能为空");
+  const session = typeof payload.session === "string" && payload.session ? payload.session : "dsh";
+  try {
+    const result = await buildInjection(command, session);
+    protocolOut({ command: result.command, envFile: result.envFile });
+  } catch (e) {
+    protocolDeny("inject", e.message);
   }
+}
 
-  const envFile = writeEnvFile(sessionId, exportNames, values);
-  const newCommand = `. ${shellSingleQuote(envFile)}; ${command}`;
-  log(`inject session=${sessionId} names=${[...exportNames.keys()].join(",")} file=${envFile}`);
+// 入库：值只经 stdin 进入，不回 stdout。status 与 add_secret 工具口径对齐。
+async function cmdStore() {
+  const payload = await readStdinJson();
+  requireProtocol(payload);
+  const name = String(payload.name ?? "").trim();
+  if (!name) protocolDeny("missing-name", "name 不能为空", { status: "invalid" });
+  const envName = envNameFromHuman(name);
+  if (!envName) protocolDeny("missing-name", `name 归一化后为空：${name}`, { status: "invalid" });
+  const provider = payload.provider === undefined || payload.provider === "" ? "keychain" : String(payload.provider);
+  if (!PROVIDERS.includes(provider)) protocolDeny("unknown-provider", `未知 provider：${provider}`, { status: "invalid" });
+  if (loadConfig().has(envName)) protocolDeny("exists", `${envName} 已存在（维护请走 secret-env add）`, { status: "invalid" });
+  const value = typeof payload.value === "string" ? payload.value : "";
+  if (!value) protocolDeny("empty-value", "空值，放弃", { status: "invalid" });
 
-  allow({ ...payload.tool_input, command: newCommand });
+  try {
+    const stored = await storeEntry(buildEntryOpts({
+      name,
+      provider,
+      detail: String(payload.detail ?? "").trim(),
+      alias: String(payload.alias ?? "").trim(),
+      description: String(payload.description ?? "").trim(),
+    }), value);
+    protocolOut({ status: "stored", envName: stored.envName, uri: stored.uri });
+  } catch (e) {
+    protocolOut({ status: "error", code: "provider-error", message: e.message }, 2);
+  }
 }
 
 // ---------- 入口（仅作为脚本直跑时分发；被 mcp.mjs import 时不执行，避免误入分发分支） ----------
@@ -309,7 +405,10 @@ else if (cmd === "remove") await cmdRemove(rest);
 else if (cmd === "list" && rest[0] === "--inject") cmdInjectList();
 else if (cmd === "list") cmdList();
 else if (cmd === "hook" && rest[0] === "zcode") await cmdHookZcode();
+else if (cmd === "info") cmdInfo();
+else if (cmd === "inject") await cmdInject();
+else if (cmd === "store") await cmdStore();
 else {
-  console.error("用法：secret-env add|remove|list [--inject]|hook zcode");
+  console.error("用法：secret-env add|remove|list [--inject]|hook zcode|info|inject|store");
   process.exit(cmd ? 2 : 0);
 }
