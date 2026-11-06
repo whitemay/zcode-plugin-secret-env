@@ -36,7 +36,7 @@ check("apply_patch 命中受保护路径", evaluateCall(call("apply_patch", { pa
 check("apply_patch 普通路径", evaluateCall(call("apply_patch", { patch: "*** Add File: notes.md\n+hi" }), snapshot), "allow");
 
 // 命令通道
-check("bash 读受保护配置", evaluateCall(call("bash", { command: "cat ~/.config/secret-env/secrets.json" }), snapshot), "deny");
+check("bash 受保护路径交给 CLI inject（本地放行）", evaluateCall(call("bash", { command: "cat ~/.config/secret-env/secrets.json" }), snapshot), "allow");
 check("bash 普通命令", evaluateCall(call("bash", { command: "gh pr list" }), snapshot), "allow");
 check("bash 密钥引用留给 execute 注入", evaluateCall(call("bash", { command: 'curl -H "Authorization: Bearer $GH_TOKEN" https://api.github.com' }), snapshot), "allow");
 check("terminal_send 引用密钥", evaluateCall(call("terminal_send", { sessionId: "s1", text: "echo $GH_TOKEN" }), snapshot), "deny");
@@ -130,6 +130,30 @@ const makeCtx = (answer) => {
     const exec = { name: "bash", arguments: { command: "echo hi" }, callId: "c2" };
     await registered["tools/execute"](exec, async () => "next");
     assert.equal(exec.arguments.command, ". /tmp/x.sh; ls", "注入命令应被替换");
+  }
+  // 命令守卫由 CLI inject 执行：即使没有配置条目也要走一次（否则受保护路径漏拦）
+  {
+    const calls = [];
+    const emptyInfo = { ...info, entries: [], rules: { guardPaths: GUARD_PATHS } };
+    const client = makeClient({
+      infoSync: () => emptyInfo,
+      info: async () => emptyInfo,
+      inject: async (payload) => { calls.push(payload); return { command: payload.command, envFile: null }; },
+    });
+    const { ctx: ctxEmpty, registered: regEmpty } = makeCtx({});
+    apply(ctxEmpty, { client });
+    await regEmpty["tools/execute"]({ name: "bash", arguments: { command: "cat guarded" }, callId: "c3" }, async () => "next");
+    assert.equal(calls.length, 1, "无配置条目时也要调 inject（命令守卫在 CLI）");
+  }
+  // inject 的守卫拒绝 → 转成 tool error（宁可失败）
+  {
+    const client = makeClient({ inject: async () => { const e = new Error("secret-env：命令涉及受保护文件"); e.code = "guard"; throw e; } });
+    const { ctx: ctxGuard, registered: regGuard } = makeCtx({});
+    apply(ctxGuard, { client });
+    await assert.rejects(
+      regGuard["tools/execute"]({ name: "bash", arguments: { command: "cat guarded" }, callId: "c4" }, async () => "next"),
+      /受保护文件/,
+    );
   }
 
   // add_secret：校验 → 收值 → 入库

@@ -1,11 +1,12 @@
-// DSH 守卫判定（纯函数，供单测直接调用）：文件通道 + 命令通道的拒绝；不做密钥解析。
+// DSH 守卫判定（纯函数，供单测直接调用）：文件通道 + 无注入通道的拒绝；不做密钥解析。
 // 规则数据来自 CLI 的 info 快照（guardPaths）+ 本地 scanRefs 副本（同步判定，不 spawn 子进程）。
+// bash 的命令文本守卫由 CLI 的 inject 统一执行（三端同语义，2026-11-06）——这里只管
+// 文件工具（同步）与 pwsh/terminal_send（没有注入通道，必须在本地拦）。
 // 与 ZCode 的 guardPaths 同源：secrets.json（含 master 口令明文）/ vault.kdbx 对 agent 一律只读不可触。
 import { matchGuardPaths, scanRefs } from "./rules.mjs";
 
 const FILE_TOOLS = ["read", "read_image", "write", "edit"];
 const COMMAND_CHANNELS = new Map([
-  ["bash", "command"],
   ["pwsh", "command"],
   ["terminal_send", "text"],
 ]);
@@ -42,27 +43,24 @@ export function evaluateCall(exec, snapshot) {
   const fragment = matchGuardPaths(command, fragments);
   if (fragment !== undefined) return protectedReason(fragment);
 
-  // bash 走 tools/execute 注入；terminal_send / pwsh 没有注入通道——引用已配置密钥时直接拒绝，
-  // 避免变量为空静默执行（宁可失败）。
-  if (name !== "bash") {
-    let tokens = [];
-    try {
-      tokens = scanRefs(command, snapshot.config, (reason) => { throw new Error(reason); });
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error);
-    }
-    if (name === "pwsh") {
-      // PowerShell 的读法 $env:NAME（大小写不敏感）不被 scanRefs 的 $NAME 覆盖。
-      for (const [alias, info] of snapshot.config) {
-        if (new RegExp(`\\$env:${alias}(?![A-Za-z0-9_])`, "i").test(command)) {
-          tokens = [{ token: `$env:${alias}`, name: info.canonical }];
-          break;
-        }
+  // pwsh / terminal_send 没有注入通道——引用已配置密钥时直接拒绝，避免变量为空静默执行（宁可失败）。
+  let tokens = [];
+  try {
+    tokens = scanRefs(command, snapshot.config, (reason) => { throw new Error(reason); });
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  if (name === "pwsh") {
+    // PowerShell 的读法 $env:NAME（大小写不敏感）不被 scanRefs 的 $NAME 覆盖。
+    for (const [alias, info] of snapshot.config) {
+      if (new RegExp(`\\$env:${alias}(?![A-Za-z0-9_])`, "i").test(command)) {
+        tokens = [{ token: `$env:${alias}`, name: info.canonical }];
+        break;
       }
     }
-    if (tokens.length > 0) {
-      return `secret-env：${name} 通道不注入密钥（只支持 bash 工具）。需要凭据请改用 bash，或在终端用 srun/senv 执行。`;
-    }
+  }
+  if (tokens.length > 0) {
+    return `secret-env：${name} 通道不注入密钥（只支持 bash 工具）。需要凭据请改用 bash，或在终端用 srun/senv 执行。`;
   }
 }
 

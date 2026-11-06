@@ -1,5 +1,5 @@
 // secret-env DSH 真身适配器（协议客户端形态，2026-11-06 起）：
-//   1) tools/execute 包装 bash：调 CLI `inject` 取注入后的命令（值只在子进程里写 env 文件，不进上下文）；
+//   1) tools/execute 包装 bash：调 CLI `inject`（命令文本守卫 + 注入后的命令；值只在子进程里写 env 文件，不进上下文）；
 //   2) tools.guard 同步守卫：本地规则副本 + info 快照（受保护路径、名字清单），不 spawn 子进程；
 //   3) systemPrompt 注入已配置名字清单与用法约定（来自 info 快照）；
 //   4) add_secret 工具：元数据由模型传，ctx.userQuestions 卡片收值后经 CLI `store` 入库（值走 stdin）。
@@ -88,13 +88,14 @@ export function apply(ctx, options = {}) {
     text: () => promptText(snapshot),
   }));
 
-  // bash 注入：exec.arguments 的替换依赖 dispatchToolBody 现场读取同一 exec 对象。
+  // bash 注入 + 命令文本守卫：一律经 CLI 的 inject（三端同语义，2026-11-06）——
+  // 未配置条目也要走一次，否则受保护路径的命令会漏拦。
+  // exec.arguments 的替换依赖 dispatchToolBody 现场读取同一 exec 对象。
   // DSH 官方契约只承诺 wrappers 可改 exec.signal；这是既有探针验证过的实现细节，DSH 收紧时需改显式 srun/senv。
   disposers.push(ctx.on("tools/execute", async function (exec, next) {
     if (exec?.name !== "bash") return next();
     const command = exec?.arguments?.command;
     if (typeof command !== "string" || !command) return next();
-    if (snapshot.config.size === 0) return next(); // 未配置 = 纯旁路（省一次子进程）
 
     const session = String(exec.callId ?? exec.id ?? "dsh");
     let result;

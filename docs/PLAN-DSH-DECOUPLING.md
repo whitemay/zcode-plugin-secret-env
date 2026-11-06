@@ -8,6 +8,7 @@
 
 - **阶段 1 已完成（2026-11-06）**：`core.mjs` 加 `PROTOCOL_VERSION` / `configPaths()`；`cli.mjs` 抽 `buildInjection()`（hook zcode 与 inject 共用）并新增 `info` / `inject` / `store` 三命令；`tests/cli-protocol.mjs` 41 项通过；`test:all` 已纳入（`bun run test:protocol` 可单独跑）。
 - **阶段 2 已完成（2026-11-06）**：新增 `adapters/dsh/client.mjs`（协议客户端，`$SENV_BIN` → PATH，超时/退出码/非 JSON 均转 `CliError`）与 `rules.mjs`（`scanRefs` 副本 + `matchGuardPaths`）；`guards.mjs` 改吃 info 快照；`index.js` 去掉主包 import，启动同步握手、guard 同步判定、注入/入库走子进程；测试：`dsh-guard.mjs`（18 项 + 装配/假客户端）、`dsh-protocol.mjs`（假 CLI 六类错误）、`rules-sync.mjs`（11 fixtures 与 core 行为全等）。`grep` 确认适配器无跨包相对 import。
+- **阶段 2 修订（2026-11-06，命令守卫下沉）**：CLI 的 `inject` 已内置命令文本守卫（受保护路径 → exit 2 `code=guard`，与 hook zcode 的 Bash 分支同语义），故 bash 的守卫交给 CLI，DSH 适配器本地 guard 只保留文件工具（read/read_image/write/edit/apply_patch）与**无注入通道**的 pwsh/terminal_send；bash 一律调一次 inject（未配置条目也调），受保护路径不再有本地放行窗口。
 - 阶段 3（拆薄包）未开工；**尚未发版**：npm 上的 0.3.1 不含协议命令，阶段 2 的插件需主包发布后才可安装使用（本地开发用 `bun link`）。
 
 ## 0. 为什么 guard 不能外置
@@ -17,7 +18,9 @@
 
 | 路径 | 频次 | 归属 |
 |---|---|---|
-| guard 判定（受保护路径 + 引用扫描） | 每次工具调用（同步） | 插件内（规则数据 + scanRefs 副本） |
+| guard 判定——文件工具（read/write/edit/apply_patch） | 每次工具调用（同步） | 插件内（规则数据 + 片段匹配） |
+| guard 判定——pwsh / terminal_send（无注入通道） | 每次调用（同步） | 插件内（需 scanRefs 副本） |
+| guard 判定——bash（含命令文本守卫） | 每次 bash 调用（异步） | CLI `inject`（与 hook zcode 同语义） |
 | bash 注入（解析、写 env 文件） | 仅命令含引用时（异步） | CLI 子进程 |
 | add_secret 入库 | 极低频（异步） | CLI 子进程 |
 | 名单/规则快照 | 启动 + 配置变更（异步） | CLI 子进程 |
@@ -39,6 +42,7 @@ secret-env info --json
 
 secret-env inject                          # stdin: { protocol, command, session }
   → { command: ". '<envFile>'; <原命令>", envFile }           # exit 0
+  → { error: "reason", code: "guard" }                      # exit 2（命令提及 secrets.json/vault.kdbx）
   → { error: "reason" }                                     # exit 2（单引号/倾泄/解析失败/占位符未配置）
   → { error: "protocol mismatch" }                          # exit 3
 

@@ -352,6 +352,12 @@ async function cmdInject() {
   const command = typeof payload.command === "string" ? payload.command : "";
   if (!command) protocolDeny("bad-command", "command 不能为空");
   const session = typeof payload.session === "string" && payload.session ? payload.session : "dsh";
+  // 命令文本守卫：与 hook zcode 的 Bash 分支同语义（三端统一，2026-11-06）——
+  // 命令提及 secrets.json/vault.kdbx 即拒，这类命令通常无 $VAR 引用，注入扫描盯不到
+  const guardHit = guardPaths(loadConfig()).find((f) => command.includes(f));
+  if (guardHit) {
+    protocolDeny("guard", `secret-env：命令涉及受保护文件（片段「${guardHit}」）——secrets.json/vault.kdbx 含 master 口令明文与全部凭据映射，禁止 Agent 读写。配置维护请在你的终端运行 secret-env add/remove，或亲手编辑。`);
+  }
   try {
     const result = await buildInjection(command, session);
     protocolOut({ command: result.command, envFile: result.envFile });

@@ -116,6 +116,14 @@ try {
     check("提示未配置", parse(r)?.error?.includes("占位符"), parse(r)?.error);
   }
   {
+    // 命令文本守卫（inject 内置，2026-11-06）：提及配置/密钥库文件即拒
+    const r = runCli("inject", { protocol: 1, command: `cat '${CONFIG_DIR}/secrets.json'` });
+    check("命令提及受保护路径 → exit 2", r.exit === 2, `exit=${r.exit}`);
+    check("code = guard", parse(r)?.code === "guard", JSON.stringify(parse(r)));
+    check("提示受保护文件", parse(r)?.error?.includes("受保护文件"), parse(r)?.error);
+    check("守卫拒绝不回显值", !r.stdout.includes(SECRET_READ));
+  }
+  {
     const r = runCli("inject", { protocol: 99, command: "ls" });
     check("协议版本不匹配 → exit 3", r.exit === 3, `exit=${r.exit}`);
     check("code = protocol", parse(r)?.code === "protocol");
