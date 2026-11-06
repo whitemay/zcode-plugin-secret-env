@@ -1,9 +1,9 @@
 // DSH 守卫与登记逻辑离线测试：不启动 DSH，直接验证 guards.mjs / entry.mjs 的判定与文案。
-// 运行：bun adapters/tests/dsh-guard.mjs
+// 运行：bun tests/dsh-guard.mjs
 import assert from "node:assert/strict";
-import { evaluateCall, promptText } from "../dsh/secret-env/guards.mjs";
-import { T, buildEntryOpts, entryCommandText, interpretAnswer } from "../dsh/secret-env/entry.mjs";
-import { guardPaths } from "../../core.mjs";
+import { evaluateCall, promptText } from "../adapters/dsh/guards.mjs";
+import { T, buildEntryOpts, entryCommandText, interpretAnswer } from "../adapters/dsh/entry.mjs";
+import { guardPaths } from "../core.mjs";
 
 const config = new Map([
   ["GH_TOKEN", { canonical: "GH_TOKEN", uri: "viking://demo/gh", description: "demo token" }],
@@ -78,7 +78,7 @@ assert.equal(keychainOpts.item, undefined);
 assert.equal(keychainOpts.path, undefined);
 
 // 插件装配（mock ctx）：确认 apply 注册 guard / systemPrompt section / tools/execute 包装 / add_secret 工具。
-const { apply } = await import("../dsh/secret-env/index.js");
+const { apply } = await import("../adapters/dsh/index.js");
 const registered = {};
 const ctx = {
   tools: {

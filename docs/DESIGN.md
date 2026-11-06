@@ -176,4 +176,4 @@ ZCode 已知宿主形态（无 password 掩码），故**不做运行时能力�
 
 理由：插件是主包的宿主适配层——注入与入库都直接 import 主包代码，终端兜底命令也假定 `senv` 存在；拆独立包只会多一次版本同步，不减少任何前置。主包被 pnpm 安装为真实副本（本地开发为 link），同时规避了「link 模式下插件从真实路径解析不到 profile 依赖」的坑（该坑曾导致 `add_secret` 静默不注册）。
 
-代价与边界：DSH profile 会安装整个 CLI 包（含 bin 与 kdbx 依赖），可接受——主包本来就是前置。ZCode 仍走仓库/本地 marketplace（marketplace 不认 npm spec），opencode 仍复制适配器文件；三端版本天然一致。
+代价与边界：DSH profile 会安装整个 CLI 包（含 bin 与 kdbx 依赖），可接受——主包本来就是前置。ZCode 仍走仓库/本地 marketplace（marketplace 不认 npm spec），opencode 主包分发（配置 `plugin` 数组引用 `"@foperate/secret-env/opencode"`，skill/MCP 经 ctx 程序化注册）；三端版本天然一致。

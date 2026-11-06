@@ -1,6 +1,6 @@
 // DSH 守卫判定（纯函数，供单测直接调用）：文件通道 + 命令通道的拒绝；不做密钥解析。
 // 与 ZCode 的 guardPaths 同源：secrets.json（含 master 口令明文）/ vault.kdbx 对 agent 一律只读不可触。
-import { guardPaths, scanRefs } from "../../../core.mjs";
+import { guardPaths, scanRefs } from "../../core.mjs";
 
 const FILE_TOOLS = ["read", "read_image", "write", "edit"];
 const COMMAND_CHANNELS = new Map([

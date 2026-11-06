@@ -68,11 +68,14 @@ npm i -g @foperate/secret-env   # 或安装已发布的 npm 包
 
 ZCode 壳：Plugin Marketplace → Add Marketplace 粘贴本仓库根 → Install **secret-env**（hooks.json 指向全局命令）。
 
-opencode 壳（V2）：把适配器复制进插件目录（`ctx.tool.hook("execute.before")` 改写 `event.input.command` 加同一 source 前缀；V1 hook 形态在 opencode ≥2 不加载）：
+opencode 壳（V2）：随主包分发——在配置 `plugin` 数组里引用（插件内注册 `execute.before` bash 注入钩子 + `senv-mcp` MCP + skill）：
 
-```bash
-cp adapters/opencode.ts ~/.config/opencode/plugins/secret-env.ts   # 或项目级 .opencode/plugins/
+```jsonc
+// ~/.config/opencode/opencode.json（或项目 opencode.json）
+{ "plugin": ["@foperate/secret-env/opencode"] }
 ```
+
+无需 cp：opencode 按 package.json 的子路径 exports 解析入口（本地开发 = 仓库 bun link 后，在 opencode 配置目录再 `bun link @foperate/secret-env`）。注意宿主**不会**自动发现插件包内的 `skills/` 目录——skill 由适配器经 `ctx.skill.transform` 程序化注册；删插件即连带 skill 与 MCP 一起消失。
 
 DSH（DeepSeek Harness）bundle：**主包本身就是 DSH bundle**（根 `package.json` 的 `dsh.bundle.patch` 指向适配器 patch），不需要独立的插件包；Host 插件提供 bash 注入、文件/通道守卫、密钥清单注入与 `add_secret` 工具：
 
@@ -84,7 +87,7 @@ DSH（DeepSeek Harness）bundle：**主包本身就是 DSH bundle**（根 `packa
    ```
 3. 重启 DSH——Host 插件代码在启动时加载，安装/替换后都需要重启。
 
-验证：新会话出现 `add_secret` 工具，系统提示出现已配置密钥清单（无真值）。更新：升级主包（或改 `adapters/dsh/secret-env/` 后）重启 DSH；skill 是 symlink，改动热加载。卸载：`plugin_manager remove_bundle`（`@foperate/secret-env`）后删除 `~/.dsh/skills/secret-env`。给 agent 逐步执行的版本见 [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md)。
+验证：新会话出现 `add_secret` 工具，系统提示出现已配置密钥清单（无真值）。更新：升级主包（或改 `adapters/dsh/` 后）重启 DSH；skill 是 symlink，改动热加载。卸载：`plugin_manager remove_bundle`（`@foperate/secret-env`）后删除 `~/.dsh/skills/secret-env`。给 agent 逐步执行的版本见 [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md)。
 
 会话内登记（所有宿主）：agent 先通过问答与用户终审元数据——环境变量名及别名（从上下文推断 well-known 候选，或按 `KEY, alias1, alias2` 格式自定义）、可选描述、provider——然后给出一条完整的 `senv add` 命令由你在自己终端执行（隐藏输入，值不经对话）。这条终端通道是通用基线，任何宿主都可用。
 

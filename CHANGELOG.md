@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versions are pre-1.0, so minor bumps carry new features.
 
+## [Unreleased]
+
+### Added
+
+- **opencode adapter distributed with the main package**: `adapters/opencode/index.ts` exposed via package exports `"./opencode"`; the host config `plugin` array references `"@foperate/secret-env/opencode"` (no `cp`). The adapter now also registers `senv-mcp` (`ctx.mcp.transform`) and the skill (`ctx.skill.transform`, reading the packaged `secret-env/skills/secret-env/SKILL.md` — the host does not auto-discover a plugin package's own `skills/` directory). Skill gains `references/opencode.md`.
+
 ## [0.3.0] - 2026-11-06
 
 ### Added

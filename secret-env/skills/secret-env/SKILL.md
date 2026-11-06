@@ -9,7 +9,7 @@ description: 密钥注入约定——执行需要凭据的 Bash 命令时如何�
 **你（模型）从头到尾只写变量名，永远不写、也永远看不到真值。**
 注入使用周知原名（如 `GH_TOKEN`），命令文本零改写——拦截层只在命令前加 source 前缀。
 
-> 宿主适配：ZCode 的拦截层是 PreToolUse 钩子，DSH 的是 host 插件；两者注入语义一致，下文统一称「拦截层」。
+> 宿主适配：ZCode 的拦截层是 PreToolUse 钩子，DSH 的是 host 插件，opencode 的是 V2 插件（`execute.before` 钩子）；三者注入语义一致，下文统一称「拦截层」。
 
 ## 两条注入触发（拦截层只认显式文本）
 
@@ -36,7 +36,7 @@ description: 密钥注入约定——执行需要凭据的 Bash 命令时如何�
 
 ## 已配置条目
 
-会话启动时，宿主会把已配置的**名字清单**（含别名，无真值）注入上下文——ZCode 经 SessionStart 钩子，DSH 经系统提示 section——以那份清单为准。配置本体在 `~/.config/secret-env/secrets.json`（周知名 → {uri, aliases?}，文件里也只有名字和 uri，没有真值）。配置为空时纯旁路、什么都不注入。清单里的 `BW_SESSION` 是基础设施条目（Bitwarden vault 解锁钥匙，bitwarden:// 凭据解析时自动使用），命令中无需引用它。
+会话启动时，宿主会把已配置的**名字清单**（含别名，无真值）注入上下文——ZCode 经 SessionStart 钩子，DSH 经系统提示 section（opencode 暂无清单注入，以 `senv list` 或 `~/.config/secret-env/secrets.json` 为准）——以那份清单为准。配置本体在 `~/.config/secret-env/secrets.json`（周知名 → {uri, aliases?}，文件里也只有名字和 uri，没有真值）。配置为空时纯旁路、什么都不注入。清单里的 `BW_SESSION` 是基础设施条目（Bitwarden vault 解锁钥匙，bitwarden:// 凭据解析时自动使用），命令中无需引用它。
 
 用户需要接入新密钥库或添加凭据条目时，按下面的流程走（provider 准备步骤见 [references/providers.md](references/providers.md)）。
 
@@ -65,6 +65,7 @@ senv add -n "github token" --provider bitwarden --item "GitHub" --alias gh-token
 
 - 若环境存在 `ZCODE_APP_VERSION`（ZCode）→ 读 [references/zcode.md](references/zcode.md)：senv-mcp 的 `add_secret` 两问题流程。
 - 若环境存在 `DSH_PROFILE`（DSH）→ 读 [references/dsh.md](references/dsh.md)：当前仍走第 2 步兜底；插件版 `add_secret` 落地后按该文档更新。
+- 若宿主是 opencode（工具列表里有 senv-mcp 的 `add_secret`）→ 读 [references/opencode.md](references/opencode.md)：senv-mcp 的 `add_secret` 两问题流程。
 - 无法判别宿主或对应 reference 不可用 → 直接走第 2 步兜底。
 
 只有 reference 明确说明「该工具可用」时才走表单路径；否则一律兜底。**不要自己发明工具参数，也不要让用户把密钥值发给你。**

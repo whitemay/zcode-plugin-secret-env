@@ -1,5 +1,5 @@
 // DSH 登记条目的纯逻辑：消息/选项文案与答案解释（参数/命令构造已收敛到仓库根 entry.mjs，三端共用）。
-import { PROVIDERS, buildEntryOpts, entryCommandText } from "../../../entry.mjs";
+import { PROVIDERS, buildEntryOpts, entryCommandText } from "../../entry.mjs";
 export { PROVIDERS, buildEntryOpts, entryCommandText };
 
 const lang = (() => {

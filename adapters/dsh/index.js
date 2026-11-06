@@ -10,11 +10,11 @@
 import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { envNameFromHuman, storeEntry } from "../../../cli.mjs";
+import { envNameFromHuman, storeEntry } from "../../cli.mjs";
 import { T, PROVIDERS, buildEntryOpts, entryCommandText, interpretAnswer } from "./entry.mjs";
 import { evaluateCall, promptText } from "./guards.mjs";
 
-const core = await import(new URL("../../../core.mjs", import.meta.url).href);
+const core = await import(new URL("../../core.mjs", import.meta.url).href);
 
 const LOG = join(tmpdir(), "secret-env-dsh.log");
 const log = (msg) => { try { appendFileSync(LOG, `[${new Date().toISOString()}] ${msg}\n`); } catch {} };

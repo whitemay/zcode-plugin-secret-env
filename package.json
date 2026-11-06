@@ -33,11 +33,11 @@
     "./entry.mjs": "./entry.mjs",
     "./mcp.mjs": "./mcp.mjs",
     "./run.mjs": "./run.mjs",
-    "./dsh": "./adapters/dsh/secret-env/index.js",
+    "./dsh": "./adapters/dsh/index.js",
+    "./opencode": "./adapters/opencode/index.ts",
     "./package.json": "./package.json"
   },
   "files": [
-    "!adapters/tests/",
     "README.md",
     "README.zh-CN.md",
     "adapters/",
@@ -52,15 +52,15 @@
   ],
   "scripts": {
     "test": "bun secret-env/tests/hook.mjs",
-    "test:dsh": "bun adapters/tests/dsh-guard.mjs",
-    "test:opencode": "bun adapters/tests/opencode.mjs"
+    "test:dsh": "bun tests/dsh-guard.mjs",
+    "test:opencode": "bun tests/opencode.mjs"
   },
   "engines": {
     "node": ">=18"
   },
   "dsh": {
     "bundle": {
-      "patch": "./adapters/dsh/secret-env/cordis.patch.yml"
+      "patch": "./adapters/dsh/cordis.patch.yml"
     }
   },
   "dependencies": {

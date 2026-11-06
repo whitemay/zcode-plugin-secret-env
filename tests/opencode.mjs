@@ -1,14 +1,20 @@
 // opencode 适配器冒烟测试：假 ctx 捕获 execute.before 钩子，构造假 event。
 // 覆盖：旁路、改名注入、braced、别名、dump 拒绝、单引号拒绝、env 文件原名 export。
 // 注意值断言只查 export 行的存在与名字，不打印真值。
-import { readFileSync } from "node:fs";
-import plugin from "../opencode.ts";
+import { readFileSync, existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import plugin, { skillAssetUrl } from "../adapters/opencode/index.ts";
 
 let pass = 0, fail = 0;
 const ok = (cond, label) => { cond ? pass++ : (fail++, console.error(`✗ ${label}`)); };
 
+// MCP/Skill 假域：捕获 transform 内容（注册表断言在下方）
+const mcpServers = new Map();
+const skills = new Map();
 let before;
 await plugin.setup({
+  mcp: { transform: async (cb) => { cb({ get: (k) => mcpServers.get(k), set: (k, v) => mcpServers.set(k, v) }); return { dispose: async () => {} }; } },
+  skill: { transform: async (cb) => { cb({ get: (k) => skills.get(k), add: (s) => skills.set(s.id, s) }); return { dispose: async () => {} }; } },
   tool: { hook: async (name, cb) => { before = cb; return { dispose: async () => {} }; } },
 });
 const run = (tool, sessionID, input) => before({ tool, sessionID, input });
@@ -71,6 +77,22 @@ const readEnvFile = (command) => {
     const content = readFileSync(m[1], "utf8");
     ok(content.includes("export GH_TOKEN="), "env 文件含 GH_TOKEN export");
     ok(content.includes("export GITHUB_TOKEN="), "env 文件含别名 export");
+  }
+}
+
+// 9. MCP 注册断言
+ok(mcpServers.get("secret-env")?.command?.[0] === "senv-mcp", "senv-mcp 注册为 local stdio");
+
+// 10. Skill 注册断言：frontmatter 字段与包内文件真实存在
+{
+  const s = skills.get("secret-env");
+  const file = readFileSync(fileURLToPath(skillAssetUrl()), "utf8");
+  ok(!!s, "skill 已注册");
+  if (s) {
+    ok(s.name === "secret-env", "skill name 正确");
+    ok(s.description.includes("密钥"), "skill description 非空");
+    ok(existsSync(s.path), "skill path 指向真实 SKILL.md");
+    ok(s.content === file, "content 与包内文件一致");
   }
 }
 
