@@ -105,7 +105,7 @@ provider 选项主名已改 keychain（2026-11-05）：与 scheme 对齐，「sy
 - **主键 = 周知环境变量名**（`GH_TOKEN`、`OPENAI_API_KEY`、`DATABASE_URL`…）——这些名字本身是事实标准，模型写命令零翻译、多工具共享同一凭据（gh/GitHub API/act 共用 `GH_TOKEN`）
 - 别名表：`GITHUB_TOKEN` → 主键 `GH_TOKEN`；一个凭据喂多个惯用名（数组）
 - 换后端只改 `uri`，命令与命名不动
-- **配置文件位置（2026-11-04 实战修订）**：`~/.config/secret-env/secrets.json`（首选，700/600）→ 插件根 `secrets.json`（兼容）。放插件目录外是硬要求：安装缓存是安装时快照，marketplace refresh 即覆盖，凭据映射会凭空丢失（首次实弹 401 的根因）
+- **配置文件位置（2026-11-04 实战修订）**：仅 `~/.config/secret-env/secrets.json`（700/600；插件根兼容位已于 2026-11-06 移除——npm 化后该位指向的路径从未存在）。放插件目录外是硬要求：安装缓存是安装时快照，marketplace refresh 即覆盖，凭据映射会凭空丢失（首次实弹 401 的根因）
 
 ## 5. 注入触发：只处理命令文本中的显式引用（已定，2026-11-04 简化）
 

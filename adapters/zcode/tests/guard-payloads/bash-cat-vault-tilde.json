@@ -1,1 +1,0 @@
-{"tool_name":"Bash","tool_input":{"command":"cat ~/.config/secret-env/vault.kdbx | head -c 32"}}

@@ -74,6 +74,7 @@ try {
     check("响应不含值", !r.stdout.includes(SECRET_READ));
     check("响应不含 uri（清单不外泄映射）", !r.stdout.includes("keychain://"));
     check("rules.guardPaths 非空", Array.isArray(info?.rules?.guardPaths) && info.rules.guardPaths.length > 0);
+    check("rules.guardPaths 无重复", new Set(info?.rules?.guardPaths).size === info?.rules?.guardPaths.length, JSON.stringify(info?.rules?.guardPaths));
     check("providers 含 keychain", info?.providers?.includes("keychain"));
   }
 

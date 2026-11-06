@@ -2,9 +2,8 @@
 // 宿主适配层（ZCode 钩子 / opencode 插件 / DSH Cordis 插件）引用本模块，
 // 只各自实现「拦截点 + 把 source 前缀写进命令」的壳。deny 为宿主注入的拒绝回调。
 import { mkdirSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 
 // 宿主协议版本（info/inject/store 的 stdin/stdout JSON 契约）：宿主适配器据此握手，不匹配即拒绝。
@@ -16,14 +15,14 @@ export const ENV_DIR = join(tmpdir(), "secret-env-injections");
 // $keychain 只剩一个可选项 password（master 口令明文 → 内联直读）。SENV_VAULT_PATH 仅供测试重定向。
 export const vaultPath = () => process.env.SENV_VAULT_PATH ?? join(process.env.HOME ?? "~", ".config", "secret-env", "vault.kdbx");
 export const STALE_MS = 15 * 60 * 1000;
-const HERE = dirname(fileURLToPath(import.meta.url));
 
 // ---------- 配置（secrets.json：周知名 → {uri, aliases?}） ----------
-// 加载顺序：~/.config/secret-env/secrets.json（稳定路径，marketplace refresh 不覆盖）→ 插件根（兼容旧位）。
-// 两处合并（稳定路径优先，同名后者不覆盖前者）：凭据映射不随插件版本走——安装缓存是快照，refresh 即覆盖。
+// 唯一位置：~/.config/secret-env/secrets.json（稳定路径，marketplace refresh 不覆盖）。
+// 放插件目录外是硬要求：凭据映射不随插件版本走——安装缓存是快照，refresh 即覆盖。
+// （插件根兼容位 2026-11-06 移除：npm 化后代码上移一级，该位指向的路径从未存在、也无人写入）
 // "$" 开头的顶层键是保留键（后端配置），不进凭据映射；当前保留键："$keychain"。
 export function configPaths() {
-  return [join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json"), join(HERE, "secret-env", "secrets.json")];
+  return [join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json")];
 }
 
 export function loadConfig() {
@@ -240,12 +239,11 @@ export async function kdbxBackend(cfg) {
 // 判定=哑文本片段匹配（宁可失败）：返回受保护路径片段列表；命中即拒绝，Agent 不碰这两个文件，
 // 配置维护走 secret-env add/remove（用户终端）或用户亲手编辑。
 export function guardPaths(config) {
-  const fragments = [".config/secret-env", join(HERE, "secret-env", "secrets.json")];
+  // 稳定配置目录 + vault 库（~ 形态与展开形态都拦，去重后 push）
+  const fragments = [".config/secret-env"];
   const vault = config?.keychainBackend?.path ?? vaultPath();
-  {
-    const expanded = vault.startsWith("~") ? join(process.env.HOME ?? "~", vault.slice(1)) : vault;
-    fragments.push(expanded, vault); // ~/ 形态与展开形态都拦
-  }
+  const expanded = vault.startsWith("~") ? join(process.env.HOME ?? "~", vault.slice(1)) : vault;
+  for (const path of [expanded, vault]) if (!fragments.includes(path)) fragments.push(path);
   return fragments;
 }
 
