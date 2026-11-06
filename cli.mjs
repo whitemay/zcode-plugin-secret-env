@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 const argv = process.argv;
 import { PROTOCOL_VERSION, configPaths, loadConfig, scanRefs, isDumpCommand, cleanStale, resolveValue, writeValue, writeEnvFile, shellSingleQuote, keychainBackend, guardPaths } from "./core.mjs";
-import { PROVIDERS, buildEntryOpts } from "./entry.mjs";
+import { PROVIDERS, buildEntryOpts, entryCommandText } from "./entry.mjs";
 
 const LOG = "/tmp/zcode-secret-env.log";
 const CONFIG_PATH = join(process.env.HOME ?? "~", ".config", "secret-env", "secrets.json");
@@ -361,6 +361,7 @@ async function cmdInject() {
 }
 
 // 入库：值只经 stdin 进入，不回 stdout。status 与 add_secret 工具口径对齐。
+// 三种调用形态：无 value = 只校验（ready）；commandOnly = 只要终端兜底命令；有 value = 入库。
 async function cmdStore() {
   const payload = await readStdinJson();
   requireProtocol(payload);
@@ -371,17 +372,22 @@ async function cmdStore() {
   const provider = payload.provider === undefined || payload.provider === "" ? "keychain" : String(payload.provider);
   if (!PROVIDERS.includes(provider)) protocolDeny("unknown-provider", `未知 provider：${provider}`, { status: "invalid" });
   if (loadConfig().has(envName)) protocolDeny("exists", `${envName} 已存在（维护请走 secret-env add）`, { status: "invalid" });
+  const picked = {
+    name,
+    provider,
+    detail: String(payload.detail ?? "").trim(),
+    alias: String(payload.alias ?? "").trim(),
+    description: String(payload.description ?? "").trim(),
+  };
+
+  if (payload.commandOnly === true) protocolOut({ status: "command", command: entryCommandText(picked) });
+  if (!("value" in payload)) protocolOut({ status: "ready", envName }); // 校验阶段：只回环境变量名（供宿主提前判重）
+
   const value = typeof payload.value === "string" ? payload.value : "";
   if (!value) protocolDeny("empty-value", "空值，放弃", { status: "invalid" });
 
   try {
-    const stored = await storeEntry(buildEntryOpts({
-      name,
-      provider,
-      detail: String(payload.detail ?? "").trim(),
-      alias: String(payload.alias ?? "").trim(),
-      description: String(payload.description ?? "").trim(),
-    }), value);
+    const stored = await storeEntry(buildEntryOpts(picked), value);
     protocolOut({ status: "stored", envName: stored.envName, uri: stored.uri });
   } catch (e) {
     protocolOut({ status: "error", code: "provider-error", message: e.message }, 2);

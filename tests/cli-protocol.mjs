@@ -129,6 +129,23 @@ try {
   console.log("③ store");
   const base = { protocol: 1, name: "cli proto token", provider: "keychain", description: "store 探针", value: SECRET_STORE };
   {
+    // 无 value = 校验阶段：只回环境变量名，不写配置
+    const r = runCli("store", { protocol: 1, name: "cli proto token", provider: "keychain" });
+    const out = parse(r);
+    check("校验阶段 exit 0 / status=ready", r.exit === 0 && out?.status === "ready", JSON.stringify(out));
+    check("校验阶段回 envName", out?.envName === "CLI_PROTO_TOKEN");
+    check("校验阶段不写配置", JSON.parse(readFileSync(CONFIG, "utf8")).CLI_PROTO_TOKEN === undefined);
+  }
+  {
+    // commandOnly = 终端兜底命令（不入库）
+    const r = runCli("store", { protocol: 1, name: "cli proto token", provider: "keychain", detail: "svc-x", alias: "a1,a2", description: "d", commandOnly: true });
+    const out = parse(r);
+    check("commandOnly exit 0", r.exit === 0 && out?.status === "command", JSON.stringify(out));
+    check("兜底命令含 senv add", typeof out?.command === "string" && out.command.startsWith("senv add -n "), out?.command);
+    check("兜底命令带别名", out?.command?.includes("--alias") === true);
+    check("兜底命令不含值", !r.stdout.includes(SECRET_STORE));
+  }
+  {
     const r = runCli("store", base);
     const out = parse(r);
     check("入库 exit 0", r.exit === 0, r.stderr.slice(0, 200));
