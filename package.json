@@ -68,8 +68,5 @@
   "dependencies": {
     "hash-wasm": "^4.12.0",
     "kdbxweb": "^2.1.1"
-  },
-  "devDependencies": {
-    "@opencode/plugin": "^2.2.5"
   }
 }
