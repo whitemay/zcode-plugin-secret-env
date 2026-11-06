@@ -59,9 +59,9 @@ The named form is the default and recommended one. For long-running services, `s
 
 ## Install
 
-This project is an npm package plus thin per-host shells. Install per harness — **ZCode and DSH use the main package only; opencode additionally needs its own plugin package.**
+This project is an npm package plus thin per-host shells. Install per harness — **ZCode needs the main package only; opencode needs the main package plus its plugin package; DSH needs the main package (global CLI) plus the bundle package.**
 
-Global command (the real body). It is **required** for ZCode, whose hooks shell out to the bare `secret-env` / `senv-mcp` commands; opencode and DSH get their own copy through their dependency install and resolve it absolutely, so they do not need it on `PATH`:
+Global command (the real body). It is **required** for ZCode and opencode — ZCode's hooks and opencode's interception hook both shell out to the bare `secret-env` command, resolved via `PATH`; DSH's bundle likewise speaks the host protocol to that `PATH` command (`$SENV_BIN` overrides the path):
 
 ```bash
 npm i -g @foperate/secret-env   # or `bun link` inside the repo, which registers secret-env and senv (same CLI, short alias)
@@ -69,7 +69,7 @@ npm i -g @foperate/secret-env   # or `bun link` inside the repo, which registers
 
 ZCode shell: Plugin Marketplace → Add Marketplace, paste this repo root → Install **secret-env**. Main package only — the marketplace step installs the shell's declarations (hooks.json, plugin.json, skills) but **does not run any package manager**, so it does not bring the `secret-env` command with it. Its hooks invoke the bare commands `secret-env` and `senv-mcp`, resolved through `PATH`; without the global install above the plugin loads but every hook fails. Install the global command first, then the plugin.
 
-opencode shell (V2): shipped as a **separate package** `@foperate/secret-env-opencode`, install it globally **together with the main package** (the plugin's injection hook, the `senv-mcp` MCP server and the skill are all provided by the plugin):
+opencode shell (V2): shipped as a **separate package** `@foperate/secret-env-opencode`, install it globally **together with the main package** (the plugin only forwards interception to the CLI and registers the skill; no `senv-mcp` — in-session registration falls back to the `senv add` terminal command; the file guard for Read/Write/Edit tools is not implemented yet — do not let the agent touch secrets.json/vault.kdbx directly):
 
 ```bash
 bun install -g @foperate/secret-env @foperate/secret-env-opencode
@@ -89,16 +89,17 @@ The adapter references the main package through `createRequire` absolute resolut
 
 Note the host does **not** auto-discover a plugin package's own `skills/` directory — the adapter registers the skill via `ctx.skill.transform`, reading `SKILL.md` from the main package; removing the plugin removes skill and MCP with it.
 
-DSH (DeepSeek Harness) bundle: **the main package itself is the DSH bundle** (the root `package.json` declares `dsh.bundle.patch` pointing at the adapter patch); **no separate plugin package is needed** — unlike opencode, DSH installs the main package alone. The Host plugin provides the bash injection, file/channel guards, the secret-list prompt section, and the `add_secret` tool:
+DSH (DeepSeek Harness) bundle: **a separate package, `@foperate/secret-env-dsh`** (zero-dependency thin package that imports no main-package code). At runtime it speaks the host protocol (`protocol 1`: `info`/`inject`/`store`; values only over stdin, never echoed) to the global CLI on `PATH`, so DSH needs **two packages**: the global CLI plus the bundle. The Host plugin provides the bash injection, file/channel guards, the secret-list prompt section, and the `add_secret` tool:
 
-1. Install the Host plugin — inside DSH you can have the agent follow this section (each `plugin_manager` call asks for a one-shot full-file-access approval): `plugin_manager` → `action: install_bundle`, `target` = `@foperate/secret-env@0.3.1` (the npm package, never a local directory). The profile's `package.json` dependency and `dsh.profile.bundles` record `@foperate/secret-env` afterwards.
-2. Install the skill (so the model knows the secret-env contract), pointing at the **installed package**, not the repo:
+1. The global CLI is installed above under “Global command” — DSH must find `secret-env` on `PATH`, otherwise the plugin refuses to load (fail closed).
+2. Install the bundle — inside DSH you can have the agent follow this section (each `plugin_manager` call asks for a one-shot full-file-access approval): `plugin_manager` → `action: install_bundle`, `target` = `@foperate/secret-env-dsh@0.3.2` (the npm package, never a local directory). The profile's `package.json` dependency and `dsh.profile.bundles` record `@foperate/secret-env-dsh` afterwards.
+3. Install the skill (**shipped inside the bundle**), pointing at the installed bundle:
    ```bash
-   ln -sfn "$HOME/.dsh/profiles/desktop/node_modules/@foperate/secret-env/skills/secret-env" ~/.dsh/skills/secret-env
+   ln -sfn "$HOME/.dsh/profiles/desktop/node_modules/@foperate/secret-env-dsh/skills/secret-env" ~/.dsh/skills/secret-env
    ```
-3. Restart DSH — Host plugin code loads at startup, so install/replace both need a restart.
+4. Restart DSH — Host plugin code loads at startup, so install/replace both need a restart.
 
-Verify: a new session shows the `add_secret` tool and the configured-secret list in the system prompt (names only, never values). To update, upgrade the main package and restart DSH; the skill symlink follows the installed package across upgrades. To uninstall, `plugin_manager remove_bundle` (`@foperate/secret-env`) and delete `~/.dsh/skills/secret-env`. The step-by-step agent-facing version is [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md).
+Verify: a new session shows the `add_secret` tool and the configured-secret list in the system prompt (names only, never values). To update, upgrade the CLI and the bundle separately (their protocol versions must match) and restart DSH; the skill symlink follows the bundle across upgrades. To uninstall, `plugin_manager remove_bundle` (`@foperate/secret-env-dsh`) and delete `~/.dsh/skills/secret-env`. The step-by-step agent-facing version is [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md).
 
 In-session registration (all hosts): the agent asks the user to finalize the metadata — env var name with aliases (well-known candidates from context or custom input in `KEY, alias1, alias2` form), an optional description, the provider — then hands over a complete `senv add` command to run in your own terminal (hidden input, the value never touches the conversation). This terminal path is the universal baseline and works on every host.
 
@@ -107,7 +108,7 @@ Host integrations upgrade the value-entry step to an in-session card (type the s
 | Host | Channel | Detail |
 | --- | --- | --- |
 | ZCode | Bundled with the plugin: `senv-mcp` (MCP elicitation), auto-registered on install | skill `references/zcode.md` |
-| opencode | Bundled with `@foperate/secret-env-opencode`: `senv-mcp` (MCP elicitation) registered via `ctx.mcp.transform` | skill `references/opencode.md` |
+| opencode | Not registered (opencode host elicitation support unverified) — registration falls back to the `senv add` terminal command | n/a |
 | DSH | Bundled with the DSH adapter: the `add_secret` tool (host question card) | skill `references/dsh.md` |
 
 Whichever channel is used, the secret value never enters the model context, and results returned to the agent are always sanitized (never contain the value).

@@ -59,9 +59,9 @@ srun --all -- ./legacy-tool.sh           # 注入全部已配置条目（供确�
 
 ## 安装
 
-本项目是 npm 包 + 各宿主薄壳。**按宿主分别安装：ZCode 与 DSH 只需主包，opencode 另需自己的插件包。**
+本项目是 npm 包 + 各宿主薄壳。**按宿主分别安装：ZCode 只需主包；opencode 需主包 + 插件包；DSH 需主包（全局 CLI）+ bundle 包。**
 
-全局命令（真身）。**ZCode 必须装**——它的 hooks 直接调用裸命令 `secret-env` / `senv-mcp`；opencode 与 DSH 通过各自的依赖安装取得副本并以绝对路径解析，不依赖 `PATH` 上有该命令：
+全局命令（真身）。**ZCode 与 opencode 必须装**——ZCode 的 hooks 与 opencode 插件的拦截钩子都以子进程调用裸命令 `secret-env`，靠 `PATH` 解析；DSH 的 bundle 同样经 `PATH` 上的 `secret-env` 走宿主协议（`$SENV_BIN` 可覆盖路径）：
 
 ```bash
 npm i -g @foperate/secret-env   # 或在仓库内 bun link，注册 secret-env 与 senv 双命令名（同一 CLI，短别名）
@@ -69,7 +69,7 @@ npm i -g @foperate/secret-env   # 或在仓库内 bun link，注册 secret-env �
 
 ZCode 壳：Plugin Marketplace → Add Marketplace 粘贴本仓库根 → Install **secret-env**。只需主包——marketplace 安装的是壳的声明文件（hooks.json、plugin.json、skills），**不执行任何包管理器**，所以不会带来 `secret-env` 命令。其 hooks 调用裸命令 `secret-env` 与 `senv-mcp`，靠 `PATH` 解析；没有上面的全局安装，插件能装上但所有 hook 全部失败。**先装全局命令，再装插件。**
 
-opencode 壳（V2）：以**独立包** `@foperate/secret-env-opencode` 分发，需与主包**一起全局安装**（注入钩子、`senv-mcp` MCP 与 skill 均由该插件提供）：
+opencode 壳（V2）：以**独立包** `@foperate/secret-env-opencode` 分发，需与主包**一起全局安装**（插件只做拦截转发与 skill 注册，注入真身是全局 CLI；`senv-mcp` 不注册，入库走 `senv add` 终端兜底；读写工具（Read/Write/Edit）的文件守卫尚未实现——勿让 agent 直接触碰 secrets.json/vault.kdbx）：
 
 ```bash
 bun install -g @foperate/secret-env @foperate/secret-env-opencode
@@ -89,17 +89,18 @@ bun install -g @foperate/secret-env @foperate/secret-env-opencode
 
 注意宿主**不会**自动发现插件包内的 `skills/` 目录——skill 由适配器经 `ctx.skill.transform` 从主包读取 `SKILL.md` 程序化注册；删插件即连带 skill 与 MCP 一起消失。
 
-DSH（DeepSeek Harness）bundle：**主包本身就是 DSH bundle**（根 `package.json` 的 `dsh.bundle.patch` 指向适配器 patch），**不需要独立的插件包**——这点与 opencode 不同，DSH 只装主包。Host 插件提供 bash 注入、文件/通道守卫、密钥清单注入与 `add_secret` 工具：
+DSH（DeepSeek Harness）bundle：**独立包 `@foperate/secret-env-dsh`**（零依赖薄包，不 import 主包代码）。它运行时经 PATH 上的全局 CLI 走宿主协议（`protocol 1`：`info`/`inject`/`store`，值只经 stdin 且不回显），所以 DSH 需要**两个包**：全局 CLI + bundle。Host 插件提供 bash 注入、文件/通道守卫、密钥清单注入与 `add_secret` 工具：
 
-1. 安装 Host 插件——可在 DSH 内让 agent 按本段执行（每次 `plugin_manager` 调用会请求一次完整文件权限审批）：
-   `plugin_manager` → `action: install_bundle`，`target` = `@foperate/secret-env@0.3.1`（npm 上的主包，不指向本地目录）。成功后 profile 的 `package.json` 依赖与 `dsh.profile.bundles` 会记录 `@foperate/secret-env`。
-2. 安装 skill（模型据此知道 secret-env 约定），指向**已安装的主包**而非仓库目录：
+1. 全局 CLI 已在上文「全局命令」装好——DSH 必须能经 PATH 找到 `secret-env`，否则插件拒绝加载（宁可失败）。
+2. 安装 bundle——可在 DSH 内让 agent 按本段执行（每次 `plugin_manager` 调用会请求一次完整文件权限审批）：
+   `plugin_manager` → `action: install_bundle`，`target` = `@foperate/secret-env-dsh@0.3.2`（npm 包，不指向本地目录）。成功后 profile 的 `package.json` 依赖与 `dsh.profile.bundles` 会记录 `@foperate/secret-env-dsh`。
+3. 安装 skill（**随 bundle 包分发**），指向已安装的 bundle：
    ```bash
-   ln -sfn "$HOME/.dsh/profiles/desktop/node_modules/@foperate/secret-env/skills/secret-env" ~/.dsh/skills/secret-env
+   ln -sfn "$HOME/.dsh/profiles/desktop/node_modules/@foperate/secret-env-dsh/skills/secret-env" ~/.dsh/skills/secret-env
    ```
-3. 重启 DSH——Host 插件代码在启动时加载，安装/替换后都需要重启。
+4. 重启 DSH——Host 插件代码在启动时加载，安装/替换后都需要重启。
 
-验证：新会话出现 `add_secret` 工具，系统提示出现已配置密钥清单（无真值）。更新：升级主包后重启 DSH，skill symlink 随主包升级自动指向新版本。卸载：`plugin_manager remove_bundle`（`@foperate/secret-env`）后删除 `~/.dsh/skills/secret-env`。给 agent 逐步执行的版本见 [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md)。
+验证：新会话出现 `add_secret` 工具，系统提示出现已配置密钥清单（无真值）。更新：CLI 与 bundle 分别升级（两者协议版本必须匹配），改 bundle 后重启 DSH；skill symlink 随 bundle 升级自动指向新版本。卸载：`plugin_manager remove_bundle`（`@foperate/secret-env-dsh`）后删除 `~/.dsh/skills/secret-env`。给 agent 逐步执行的版本见 [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md)。
 
 会话内登记（所有宿主）：agent 先通过问答与用户终审元数据——环境变量名及别名（从上下文推断 well-known 候选，或按 `KEY, alias1, alias2` 格式自定义）、可选描述、provider——然后给出一条完整的 `senv add` 命令由你在自己终端执行（隐藏输入，值不经对话）。这条终端通道是通用基线，任何宿主都可用。
 
@@ -108,7 +109,7 @@ DSH（DeepSeek Harness）bundle：**主包本身就是 DSH bundle**（根 `packa
 | 宿主 | 通道 | 详情 |
 | --- | --- | --- |
 | ZCode | 插件自带：`senv-mcp`（MCP elicitation），安装即自动注册 | skill `references/zcode.md` |
-| opencode | 由 `@foperate/secret-env-opencode` 提供：`senv-mcp`（MCP elicitation），经 `ctx.mcp.transform` 注册 | skill `references/opencode.md` |
+| opencode | 不注册（opencode 宿主 elicitation 支持未验证）——入库走 SKILL.md 的 `senv add` 终端兜底 | 无 |
 | DSH | DSH 适配器自带：`add_secret` 工具（宿主问答卡片） | skill `references/dsh.md` |
 
 无论哪条通道，密钥值都不进入模型上下文，返回给 agent 的结果永远脱敏（不含密钥值）。

@@ -25,7 +25,7 @@ secret-env info                        # 应输出一行含 "protocol":1 的 JSO
 
 ```
 action: install_bundle
-target: @foperate/secret-env-dsh@0.1.0        # npm 上的 bundle 包
+target: @foperate/secret-env-dsh@0.3.2        # npm 上的 bundle 包
 ```
 
 要点：

@@ -4,6 +4,24 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-06
+
+Release scope: **plugin distribution only**. No user-facing behavior change — the DSH and opencode adapters are repackaged as thin clients that talk to the globally installed CLI over the host protocol, and the skills are distributed by the host packages instead of the main package. The main package and every plugin package share this version number.
+
+### Added
+
+- **Host protocol v1** — `secret-env info | inject | store`: one line of JSON on stdin, one line on stdout; exit code 0 = ok, 2 = refusal (`error`/`code` in JSON), 3 = protocol mismatch. Values only ever travel over stdin and are never echoed.
+- **`@foperate/secret-env-dsh`** — the DSH bundle is now its own zero-dependency npm package (`adapters/dsh`, shipped with `dsh.bundle.patch`, locale, icon and its own skill copy). Installing DSH takes two packages: the global CLI plus this bundle.
+- New regression suites: `tests/cli-protocol.mjs`, `tests/dsh-protocol.mjs`, `tests/rules-sync.mjs`, `tests/dsh-package.mjs`.
+
+### Changed
+
+- **DSH adapter is a protocol client**: it no longer imports `core.mjs`/`cli.mjs`/`entry.mjs`. `tools/execute` hands bash to `secret-env inject` (which now also owns the command-text guard), `add_secret` uses `store` (validate → collect value → store), and the synchronous guards keep only what cannot wait for a subprocess: file tools and the non-injecting `pwsh`/`terminal_send` channels. Snapshots come from `info`; protocol mismatch or a missing CLI fails plugin startup (fail closed).
+- **opencode adapter** no longer registers `senv-mcp` (in-session registration on opencode falls back to the `senv add` terminal path) and shells out to `secret-env inject` for interception instead of importing the main package. Note: opencode still has no file read/write guard.
+- **Skills are shipped by the host packages**: `skills/secret-env/` remains in the repo only as the byte-for-byte sync source and is no longer part of the main package's `files`; ZCode, opencode and DSH each ship their own copy (four copies total, enforced by `tests/skill-sync.mjs`).
+- Main package: no `dsh.bundle` declaration, no `./dsh` export, `files` no longer carries `adapters/dsh/` or `skills/`.
+- DSH system prompt / guard rule data come from the CLI snapshot, so `bun link` in this repo updates CLI behavior immediately; a bundle upgrade still needs a DSH restart.
+
 ## [0.3.1] - 2026-11-06
 
 ### Added
