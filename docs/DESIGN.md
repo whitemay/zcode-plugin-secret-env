@@ -170,7 +170,7 @@ ZCode 已知宿主形态（无 password 掩码），故**不做运行时能力�
 - **曾议方案存档**：① senv-mcp 加第二个 tool（store_secret，capability 门控按 client 是否声明 elicitation 区分）专供 DSH 程序化调用——可行，但 DSH 侧要多养一个 node 子进程（PATH/运行时坑有前科）且隔离增益为零（值本就在插件进程），弃；② DSH wrapper 拦截 `senv add` 命令文本升级为卡片——触发物可与兜底统一，但命令文本解析脆，改为插件注册独立 add_secret 工具（结构化入参），已实现。
 - **MCP 定位**：MCP（elicitation）只是 ZCode 的实现通道，不是项目级能力——README 按「会话内登记」能力书写，MCP 降为宿主集成细节；设计论证留本节。
 
-## 11. 分发：主包兼任 DSH bundle（2026-11-06 定案，0.3.0 落地）
+## 11. 分发：主包兼任 DSH bundle（2026-11-06 定案，0.3.0 落地；同日被第 13 节取代）
 
 0.3.0 起 DSH 不再有独立插件包：根 `package.json` 声明 `dsh.bundle.patch` 指向 `adapters/dsh/cordis.patch.yml`，patch 的 insert name 为 `@foperate/secret-env/dsh`（由根 `exports` 暴露），`plugin_manager install_bundle` 的 target 直接是主包（npm spec 或本地仓库根）。
 
@@ -188,4 +188,15 @@ opencode 的 `plugin` 数组只接受 registry 包名（可带 version/range/tag
 
 跨包引用：适配器对主包的 core 与 `mcp.mjs` 走 `createRequire` 绝对解析，MCP 命令用单元素绝对路径（`[process.execPath, <mcp.mjs>]` 会让 opencode 把首个参数当 cwd 去 chdir，报 ENOTDIR），不依赖 `PATH`。**skill 不做跨包引用**：插件包自带副本 `adapters/opencode/skills/secret-env/`（随 npm 包发布），由 `tests/skill-sync.mjs` 与权威副本逐字节校验。
 
-与 DSH 的不对称是宿主机制决定的：DSH 的 `dsh.bundle.patch` 必须留在主包，无法拆分；opencode 则因 spec 限制必须独立成包。
+与 DSH 的不对称是宿主机制决定的（2026-11-06 初版判断）：当时认为 DSH 的 `dsh.bundle.patch` 必须留在主包，无法拆分；该判断已被第 13 节的解耦结果取代。
+
+## 13. 分发：DSH 独立 bundle 包（2026-11-06 定案，取代第 11 节）
+
+`adapters/dsh/` 成为独立 npm 包 `@foperate/secret-env-dsh`（零依赖）：自带 `package.json`（`dsh.bundle.patch: ./cordis.patch.yml`，patch insert name = 包名）、自带 skill 副本 `skills/secret-env/`、自带 locale/icon。主包不再声明 `dsh.bundle`、不再导出 `./dsh`、`files` 不再包含 `adapters/dsh/`。安装 = **全局 CLI（主包）+ bundle 包**：`bun add -g @foperate/secret-env` + `plugin_manager install_bundle @foperate/secret-env-dsh@<ver>`；skill 的 `~/.dsh/skills/secret-env` 指向已安装 bundle 包内的副本。
+
+为何推翻第 11 节：第 11 节的结论建立在「插件直接 import 主包代码」之上——那种耦合使拆分只增加版本同步成本、不减少前置。适配器协议化（`docs/PLAN-DSH-DECOUPLING.md`）后这两条都变了：
+
+- **命令守卫下沉 CLI**：`inject` 内置受保护路径守卫与注入，DSH 本地只需同步回调能做的部分（文件工具、pwsh/terminal_send）；`info` 提供清单与 guardPaths 快照。适配器不再 import `core.mjs`/`cli.mjs`/`entry.mjs`。
+- **重复安装消失**：主包不再被 profile 装一份副本。此前是「全局 CLI + profile 里同一包的副本」；现在 profile 只有几十 KB 的薄包，主包只在全局一份。
+
+代价（显式接受）：① CLI 必须在 `PATH` 上且支持 `protocol 1`（`$SENV_BIN` 可覆盖路径；握手失败 = 插件不加载，宁可失败）；② 两个包分别发版，协议版本必须匹配；③ skill 副本从三份变四份（`skill-sync` 逐字节校验）；④ `tests/dsh-package.mjs` 守住拆包形态不变量（包名/patch name/零依赖/files 覆盖/无跨包 import/主包不再声明 dsh）。

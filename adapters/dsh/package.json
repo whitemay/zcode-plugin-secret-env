@@ -1,0 +1,44 @@
+{
+  "name": "@foperate/secret-env-dsh",
+  "version": "0.1.0",
+  "description": "secret-env 的 DeepSeek Harness（DSH）bundle：bash 注入、文件/通道守卫、密钥清单与 add_secret 工具。运行时经 PATH 上的全局 CLI 走宿主协议（protocol 1），本包零依赖。",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "MIT",
+  "author": "whitemay",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/whitemay/zcode-plugin-secret-env.git",
+    "directory": "adapters/dsh"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "secret-env",
+    "credential-injection"
+  ],
+  "files": [
+    "index.js",
+    "entry.mjs",
+    "guards.mjs",
+    "rules.mjs",
+    "client.mjs",
+    "cordis.patch.yml",
+    "locale/",
+    "icon.svg",
+    "skills/",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

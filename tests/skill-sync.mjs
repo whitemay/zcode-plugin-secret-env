@@ -1,8 +1,8 @@
 // skill 副本一致性检查：skills/secret-env（权威）与各宿主自带的副本必须逐字节一致。
-// 权威副本在主包根：DSH 通过 ~/.dsh/skills symlink 指向它。
-// 各宿主各存一份真实副本，不做跨包引用：
+// 权威副本在主包根；各宿主各存一份真实副本，不做跨包引用：
 //   - ZCode：marketplace 用 git-subdir 只拉 adapters/zcode，跨出该子目录的路径（含软链）到不了。
 //   - opencode：插件包独立发 npm，自带副本才自包含。
+//   - DSH：bundle 包（adapters/dsh）独立发 npm，skill 随包分发，`~/.dsh/skills` symlink 指向它。
 // 运行：bun tests/skill-sync.mjs（CI 与 pre-commit 都应跑）
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -12,6 +12,7 @@ const CANON = join(ROOT, "skills", "secret-env");
 const COPIES = {
   zcode: join(ROOT, "adapters", "zcode", "skills", "secret-env"),
   opencode: join(ROOT, "adapters", "opencode", "skills", "secret-env"),
+  dsh: join(ROOT, "adapters", "dsh", "skills", "secret-env"),
 };
 
 function walk(dir, base = dir, out = []) {

@@ -9,6 +9,7 @@ const CANON = join(ROOT, "skills", "secret-env");
 const COPIES = {
   zcode: join(ROOT, "adapters", "zcode", "skills", "secret-env"),
   opencode: join(ROOT, "adapters", "opencode", "skills", "secret-env"),
+  dsh: join(ROOT, "adapters", "dsh", "skills", "secret-env"),
 };
 
 if (!existsSync(CANON)) {
