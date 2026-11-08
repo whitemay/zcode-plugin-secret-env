@@ -1,6 +1,6 @@
-// DSH 适配器的 CLI 协议客户端（protocol 1）：只经子进程与主包交互，不 import 主包代码。
-// 契约：stdin 一行 JSON，stdout 一行 JSON；退出码 0 成功 / 2 业务拒绝（JSON 带 code）/ 3 协议不匹配。
-// 值只经 stdin 进入，响应不含值。协议见 docs/PLAN-DSH-DECOUPLING.md。
+// DSH 适配器的 rsenv CLI 协议客户端（protocol 1）：只经子进程与 rsenv 交互，不 import 主包代码。
+// 契约：stdin 一行 JSON，stdout 一行 JSON；rsenv 侧退出码 0 成功 / 2 业务拒绝。
+// 值不经过本插件：parse 只回 {action, token?}，消费由改写命令里的 rsenv inject 完成（eval 链）。
 import { spawn, spawnSync } from "node:child_process";
 
 export const PROTOCOL = 1;
@@ -22,14 +22,14 @@ function toJson(out, err, code, cmd) {
   let json = null;
   try { json = text ? JSON.parse(text) : null; } catch { json = null; }
   if (json === null) {
-    throw new CliError(`secret-env ${cmd} 返回非 JSON（exit=${code}）${err ? `：${err.trim().slice(0, MAX_STDERR)}` : ""}`, { code: "bad-output", exit: code });
+    throw new CliError(`rsenv ${cmd} 返回非 JSON（exit=${code}）${err ? `：${err.trim().slice(0, MAX_STDERR)}` : ""}`, { code: "bad-output", exit: code });
   }
-  if (code !== 0) throw new CliError(json.error ?? `secret-env ${cmd} 失败（exit=${code}）`, { code: json.code ?? "cli", exit: code });
+  if (code !== 0) throw new CliError(json.error ?? `rsenv ${cmd} 失败（exit=${code}）`, { code: json.code ?? "cli", exit: code });
   return json;
 }
 
-export function createClient({ bin = process.env.SENV_BIN || "secret-env", timeoutMs = 8000 } = {}) {
-  const hint = `请全局安装 @foperate/secret-env（bun add -g · npm i -g）并确认 ${bin} 在 PATH 上`;
+export function createClient({ bin = process.env.SENV_BIN || "rsenv", timeoutMs = 8000 } = {}) {
+  const hint = `请安装 rsenv 并确认 ${bin} 在 PATH 上，然后在其终端运行 rsenv login 解锁密钥库`;
 
   function run(cmd, payload, { timeout = timeoutMs } = {}) {
     return new Promise((resolve, reject) => {
@@ -44,7 +44,7 @@ export function createClient({ bin = process.env.SENV_BIN || "secret-env", timeo
       const timer = setTimeout(() => {
         done = true;
         child.kill("SIGKILL");
-        reject(new CliError(`secret-env ${cmd} 超时（${timeout}ms）`, { code: "timeout" }));
+        reject(new CliError(`rsenv ${cmd} 超时（${timeout}ms）`, { code: "timeout" }));
       }, timeout);
       const finish = (fn, value) => {
         if (done) return;
@@ -59,7 +59,7 @@ export function createClient({ bin = process.env.SENV_BIN || "secret-env", timeo
         try { finish(resolve, toJson(out, err, code, cmd)); }
         catch (e) { finish(reject, e); }
       });
-      child.stdin.end(payload === null ? undefined : JSON.stringify({ protocol: PROTOCOL, ...payload }));
+      child.stdin.end(payload === null ? undefined : JSON.stringify(payload));
     });
   }
 
@@ -74,16 +74,17 @@ export function createClient({ bin = process.env.SENV_BIN || "secret-env", timeo
     bin,
     info: () => run("info", null),
     infoSync: () => runSync("info"),
-    inject: (payload) => run("inject", payload),
-    store: (payload) => run("store", payload),
+    // 命令门（钩子时刻）：stdin {command} → {action: pass|inject|reject, token?, names?, reason?}
+    // 注意：parse 的 reject 以 JSON action 表达（退出码仍 0），业务拒绝在 index.js 判定。
+    parse: (payload) => run("parse", payload),
   };
 }
 
-// 版本握手：插件只认自己实现的协议版本
+// 版本握手：插件只认自己实现的协议版本（rsenv info 的 protocol 字段）
 export function requireProtocol(info) {
   const got = info?.protocol;
   if (got !== PROTOCOL) {
-    throw new CliError(`secret-env 协议版本不匹配：插件需要 ${PROTOCOL}，CLI 返回 ${got ?? "无"}（请把主包与插件升到匹配版本）`, { code: "protocol" });
+    throw new CliError(`rsenv 协议版本不匹配：插件需要 ${PROTOCOL}，CLI 返回 ${got ?? "无"}（请把 rsenv 与插件升到匹配版本）`, { code: "protocol" });
   }
   return info;
 }

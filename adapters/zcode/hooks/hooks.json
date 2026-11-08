@@ -5,10 +5,10 @@
         "hooks": [
           {
             "type": "process",
-            "command": "secret-env",
-            "args": ["list", "--inject"],
+            "command": "node",
+            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/secret-env-zcode.mjs", "session-start"],
             "timeoutMs": 5000,
-            "statusMessage": "secret-env 清单注入"
+            "statusMessage": "rsenv 清单注入"
           }
         ]
       }
@@ -19,10 +19,10 @@
         "hooks": [
           {
             "type": "process",
-            "command": "secret-env",
-            "args": ["hook", "zcode"],
+            "command": "node",
+            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/secret-env-zcode.mjs", "pretooluse"],
             "timeoutMs": 15000,
-            "statusMessage": "secret-env"
+            "statusMessage": "rsenv"
           }
         ]
       },
@@ -31,10 +31,10 @@
         "hooks": [
           {
             "type": "process",
-            "command": "secret-env",
-            "args": ["hook", "zcode"],
+            "command": "node",
+            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/secret-env-zcode.mjs", "pretooluse"],
             "timeoutMs": 5000,
-            "statusMessage": "secret-env 文件守卫"
+            "statusMessage": "rsenv 文件守卫"
           }
         ]
       }

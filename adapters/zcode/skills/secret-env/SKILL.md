@@ -1,88 +1,66 @@
 ---
 name: secret-env
-description: 密钥注入约定——执行需要凭据的 Bash 命令时如何让 secret-env 插件把凭据送进子进程环境（模型上下文永不见值）。写涉及 GH_TOKEN/API key/DATABASE_URL 等凭据的命令前必读。
+description: 凭据引用与注入——密钥值永远不进模型上下文；命令守卫与一次性 token 注入链、daemon 生命周期与恢复指令
 ---
 
-# secret-env：密钥显式引用约定
+# secret-env（rsenv）使用约定
 
-本项目的密钥从私有库（Keychain / OpenViking / Bitwarden）直接注入 Bash 子进程环境。
-**你（模型）从头到尾只写变量名，永远不写、也永远看不到真值。**
-注入使用周知原名（如 `GH_TOKEN`），命令文本零改写——拦截层只在命令前加 source 前缀。
+## 核心不变量
 
-> 宿主适配：ZCode 的拦截层是 PreToolUse 钩子，DSH 的是 host 插件，opencode 的是 V2 插件（`execute.before` 钩子）；三者注入语义一致，下文统一称「拦截层」。
+- **你（agent）永远接触不到凭据明文**。命令文本里引用 `$NAME`，宿主钩子调 `rsenv parse` 守卫并签发一次性 token，改写成注入链后值经 `eval` 进入子进程环境——不进 argv、不进你的上下文。
+- 密码/口令类输入**一律让用户在终端完成**（`rsenv login`/`rsenv init` 是交互式隐藏输入），不要试图替用户输入或经对话转述口令。
 
-## 两条注入触发（拦截层只认显式文本）
+## 注入机制（parse / inject / run 三分法）
 
-1. **占位符**：命令文本里写 `{{secret:NAME}}`（NAME 必须已配置）
-2. **显式 $VAR**：命令文本里出现已配置的周知变量名
+- **parse**（钩子时刻，插件壳调用）：命令守卫（文件提及/单引号/倾泻黑名单）+ 解析全部值（值不出 daemon）+ 签发**一次性 token**。
+- **inject**（运行时刻）：`rsenv inject <token>` 消费槽位输出 `export NAME='…'` 行，由同 shell 的 `eval` 消费。改写形态：`_rse_inj="$(rsenv inject <token>)" && eval "$_rse_inj" && { 原命令; }`——token 已消费/失效则短路，原命令不执行（fail-closed）。**token 一次性，重放不可能；不要自己拼这个链，宿主钩子会做**。
+- **run**：`rsenv run NAME... -- cmd args` 具名注入执行器（env 只活在子进程内，退出码透传），手动场景用。
+- 值只在子进程 env 内存活，不跨命令持久。
 
-## 铁律
+## 常用命令
 
-- **命令里禁止写死任何密钥明文**。需要凭据时写成 `"$GH_TOKEN"` 或 `{{secret:GH_TOKEN}}`。
-- **禁止单引号包引用**：`'$GH_TOKEN'` 内不会展开，拦截层会直接拒绝整条命令。一律双引号：
-  ```bash
-  curl -H "Authorization: Bearer $GH_TOKEN" ...
-  psql "$DATABASE_URL" -c '...'
-  ```
-- **隐式使用必须显式化**：拦截层只扫命令文本，隐式读环境变量的工具（`gh`、`git push` 等）扫不到、不会注入。必须让命令文本出现引用，例如变量名前缀或同义别名均可——副作用都是把真值以原名送进环境：
-  ```bash
-  GH_TOKEN=$GH_TOKEN gh pr list          # 同名显式化
-  GITHUB_TOKEN=${GH_TOKEN} git push ...  # 工具认别的名字，别名映射
-  USE_TOKEN=${GH_TOKEN} some-tool ...    # 任意名字皆可，注入的仍是原名 GH_TOKEN
-  ```
-  注意：拦截层按命令中**实际引用的名字**注入——引用 `$GITHUB_TOKEN` 就注入 `GITHUB_TOKEN`，引用 `$GH_TOKEN` 就注入 `GH_TOKEN`。需要哪个名字就在命令里写哪个名字的引用。
-- **倾泻意图放独立调用**：查看环境变量、`set -e` 选项、`export FOO=1` 这类与密钥无关的操作，放在**单独一次 Bash 调用**里，不要和带密钥引用的命令拼在同一条。原因：① 每次调用是全新 shell，注入变量不跨调用存活，独立调 `env` 看不到任何密钥，天然安全；② 同一条命令里「密钥引用 + env/printenv/裸 set/裸 export」会被拦截层直接拒绝（同命令倾泻）。
-- **不要 echo/打印凭据**：`echo $GH_TOKEN` 会把值送进你的上下文（出口防线尚未实现），等于绕过整个机制。
+| 命令 | 说明 |
+|---|---|
+| `rsenv list` | 条目清单（名字+描述+字段键，**无值**） |
+| `rsenv get NAME` | 终端取值打印（用户自查用。**agent 不要调用**——会把明文带进上下文；这是纪律要求，宿主侧没有强制拦截） |
+| `rsenv set NAME`（值经 stdin） | 入库 native 条目；`--desc 描述` 加描述 |
+| `rsenv set NAME --uri provider://路径` | 入库 provider 引用条目（viking:// / bitwarden:// / onepassword://），无需 stdin |
+| `rsenv remove NAME` | 删除条目 |
+| `rsenv import-secrets [路径]` | 从旧 secrets.json 迁移（URI 引用，无明文） |
+| `rsenv run NAME... -- cmd args` | 具名注入执行器 |
+| `rsenv passwd` | 换口令（终端交互；整库闲置重加密：daemon 短暂停→侧路径建新库→换装→验证失败自动回滚） |
+| `rsenv info` | 守卫快照：guard_paths / entries（宿主钩子的保护目标清单来源） |
+| `rsenv mcp` | stdio MCP 管理面（只 list/status，值不走此通道） |
 
-## 已配置条目
+## daemon 生命周期（重要）
 
-会话启动时，宿主会把已配置的**名字清单**（含别名，无真值）注入上下文——ZCode 经 SessionStart 钩子，DSH 经系统提示 section（opencode 暂无清单注入，以 `senv list` 或 `~/.config/secret-env/secrets.json` 为准）——以那份清单为准。配置本体在 `~/.config/secret-env/secrets.json`（周知名 → {uri, aliases?}，文件里也只有名字和 uri，没有真值）。配置为空时纯旁路、什么都不注入。清单里的 `BW_SESSION` 是基础设施条目（Bitwarden vault 解锁钥匙，bitwarden:// 凭据解析时自动使用），命令中无需引用它。
+- **daemon 只由 `rsenv login` 拉起**（用户终端、隐藏输入口令；幂等——daemon 已在跑且已解锁则静默退出，locked 态继续走解锁）。
+- **login 请在完整用户 shell 里执行**：daemon 的 provider 工具环境继承 login 终端的 PATH（ov 依赖 node）；精简终端/GUI 内嵌终端可能缺工具链，缺什么 login 时会明确提示。
+- **CLI 不会自行拉起 daemon**：daemon 不在时所有取值命令直接失败，错误信息含恢复指令。
+- `rsenv logout`：清 key 与待注入槽位、停 daemon（用完即走的敏感窗口管理）。
+- `rsenv init`：仅首次建库（库已存在则拒绝）。
 
-用户需要接入新密钥库或添加凭据条目时，按下面的流程走（provider 准备步骤见 [references/providers.md](references/providers.md)）。
+## agent 行为约定（与 CLI 错误信息一一对应）
 
-## 登记新凭据：先问答，默认交终端执行
+CLI 报 `vault is locked: ask the user to run "rsenv login" in their terminal` →
+告知用户：在终端跑 `rsenv login`，输 vault 口令，然后重试命令。**不要自己跑 login**（口令必须由用户输入，你输了也没有 vault 口令）。
 
-登记分两步：**你只负责元数据，密钥值永远不经过你的上下文**。
+CLI 报 `vault is not initialized: ask the user to run "rsenv init" in their terminal` →
+告知用户：首次使用需 `rsenv init` 建库设口令（终端交互，口令两次确认）。
 
-**第 1 步：元数据问答**——用宿主自带的问答工具（ZCode 的 `AskUserQuestion`、DSH 的 `ask_user_question`；都没有时直接在对话里问），一次问清三个字段：
+CLI 报 `rejected: caller is not rsenv` →
+说明该调用不是经 rsenv 发起的（鉴权拒绝），检查调用方式。
 
-- **key 题**：从上下文推断 well-known 候选作为选项（同一凭据的多个周知名都列出，如 Hugging Face → `HF_TOKEN`、`HUGGINGFACE_TOKEN`，标注互为别名）；用户也可自由输入，格式 `KEY, alias1, alias2`（逗号分隔，别名可省）。问题文案须说明该格式。
-- **desc 题**：选项 1=你组织的一段描述，选项 2=不需要描述。文案须警示「描述会进入模型上下文，不得含敏感信息」。
-- **provider 题**：keychain（KeePassXC 库）/ bitwarden（Bitwarden）/ viking（OpenViking）/ onepassword（1Password），无从推断时默认 keychain。
+## 守卫行为（为什么某些命令被拒）
 
-用户选完由**你**把答案解析成定稿：well-known 选项→该名字+已知别名；自由输入→按逗号拆出 name 和别名。
+- 单引号内引用 `$NAME` → 整条拒绝（完整性无法保证），改用双引号或不引用。
+- 命令含引用且命令位置有 `printenv`/`set`/`export`（带引用参数）/裸 `env` → 倾泻拒绝，换目标文件输出等具体消费形态。
+- 命令文本涉及密钥库文件（vault.db、.vault.salt、audit.jsonl、daemon.sock）→ 拒绝，配置维护请在你的终端用 `rsenv set/remove`。
 
-**第 2 步（默认兜底，所有宿主可用）：构造完整导入命令，交用户在终端执行**
+## 安全边界（对 agent 的说明）
 
-```bash
-# 例：bitwarden 条目
-senv add -n "github token" --provider bitwarden --item "GitHub" --alias gh-token --desc "GitHub PAT"
-```
-
-命令的密钥值输入是隐藏的、不经过上下文，执行完登记即完成。转交时只需要给命令 + 一句「在终端运行，按提示输入密钥值」——提醒提示符要的是密钥原值，不是名字或说明文字。
-
-**增强分支（仅当宿主满足条件）**：部分宿主能提供表单收值（值同样不进上下文）。先判宿主，再读对应 reference（与本 SKILL.md 同目录的 `references/`）：
-
-- 若环境存在 `ZCODE_APP_VERSION`（ZCode）→ 读 [references/zcode.md](references/zcode.md)：`senv mcp` 的 `add_secret` 两问题流程。
-- 若环境存在 `DSH_PROFILE`（DSH）→ 读 [references/dsh.md](references/dsh.md)：当前仍走第 2 步兜底；插件版 `add_secret` 落地后按该文档更新。
-- 无法判别宿主或对应 reference 不可用（含 opencode 等其它宿主）→ 直接走第 2 步兜底。
-
-只有 reference 明确说明「该工具可用」时才走表单路径；否则一律兜底。**不要自己发明工具参数，也不要让用户把密钥值发给你。**
-
-## 常见配方
-
-```bash
-# GitHub
-GH_TOKEN=$GH_TOKEN gh pr list
-curl -s -H "Authorization: Bearer {{secret:GH_TOKEN}}" https://api.github.com/user
-
-# 数据库
-psql "$DATABASE_URL" -c '\dt'
-
-# OpenAI
-OPENAI_API_KEY={{secret:OPENAI_API_KEY}} bun run script.ts
-```
-
-## 失败即信号
-
-拦截层报错时按提示修正命令文本（多半是单引号或未配置的名字），**不要尝试绕过拦截层**（如把值写进文件再 cat、从代码里硬编码读取）。ZCode 的报错为 exit 2 + stderr；DSH 的报错为工具错误结果。
+- 本工具保证的是**数据流**：值不落盘明文、不进命令文本/argv、不进你的上下文与日志。
+- 它**不**限制"你如何使用密钥"：用在哪条命令、发往哪个端点、用多少次。这属于纪律与凭据权限问题，不在本工具的可强制范围。
+- 以上守卫都是**防误触**的文本级规则，不是安全边界：**不要试图用脚本嵌套、编码、二次解析等方式绕过守卫**——即使技术上可行，也属于越权使用，用户会发现。
+- `rsenv get` 会把明文打印到 stdout：**agent 不得调用**（用户自查专用）。
+- 若某个任务需要"限制能力"，正确做法是让用户改用**短时/最小权限凭据**或按用途拆分的条目，而不是在命令里变通。

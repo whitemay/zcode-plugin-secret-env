@@ -134,6 +134,18 @@ secret-env list
 
 模板见 [adapters/zcode/secrets.example.json](./adapters/zcode/secrets.example.json)。配置为空时钩子纯旁路。
 
+## 安全边界（非目标，请先读这段）
+
+**本项目是数据流约束，不是访问控制系统。** 它保证密钥值不落盘明文、不进命令文本/argv、不进模型上下文、不进日志。它**不**保证：
+
+- 限制 agent（或任何以你的身份运行的程序）**如何使用**密钥——用在哪条命令、发往哪个端点、用多少次；
+- 防御本机同用户攻击者：vault 口令可被键盘记录，`rsenv` 二进制是用户可写文件，`audit.jsonl` 同 uid 可改写；
+- 出口脱敏——值一旦进入消费端（`curl`、脚本），是否离开机器不由本工具控制。
+
+命令守卫（受保护库文件/单引号引用/倾泻意图）是**防误触**，不是边界：脚本嵌套（`sh x.sh` 内部再调 `rsenv`）可完全绕过宿主钩子。`rsenv get` 按设计会把明文打到 stdout（用户自查用），agent 侧没有强制拦截——"agent 不用它"是纪律，不是机制。
+
+若真要约束"能力"，请在**有权威的地方**做：签发短时/最小权限凭据（fine-grained PAT、只读数据库账号、STS）、按用途拆分条目，或在服务前放置执行策略的代理。完整推理与已放弃的方案见 [docs/SECURITY.md](./docs/SECURITY.md)。
+
 ## 已知边界（诚实声明）
 
 - **出口无脱敏**：ZCode PostToolUse 输出无 tool_result 改写能力（harness 源码核查定案），`echo $GH_TOKEN` 这类值回流无自动防线，靠 skill 明令禁止

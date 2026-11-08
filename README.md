@@ -133,6 +133,18 @@ secret-env list
 
 See [adapters/zcode/secrets.example.json](./adapters/zcode/secrets.example.json) for the template. With an empty config the hook is a pure bypass.
 
+## Security boundary (non-goals, read this)
+
+**This is a data-flow guard, not an access-control system.** It keeps secret values out of plaintext on disk, out of command text/argv, out of the model context and out of logs. It does **not**:
+
+- restrict what an agent (or anything running as you) may *do* with a secret — which command consumes it, where it is sent, how often;
+- defend against a local attacker running as the same user (vault password can be keylogged, the `rsenv` binary is user-writable, `audit.jsonl` is user-writable);
+- sanitize egress — once a value reaches a consumer (`curl`, a script), whether it leaves the machine is outside this tool's control.
+
+Command guards (protected vault/audit paths, single-quote references, dump intent) are **accident prevention**, not boundaries: script nesting (`sh x.sh` calling `rsenv` inside) bypasses the host hook entirely. `rsenv get` prints plaintext by design (user self-check) and is not forcibly blocked for agents — agents are told not to use it, which is discipline, not enforcement.
+
+If you need to bound the *capability*, do it where authority exists: issue short-lived / least-privilege credentials (fine-grained PAT, read-only DB account, STS), split entries by purpose, or put a policy-enforcing proxy in front of the service. Full reasoning and rejected designs: [docs/SECURITY.md](./docs/SECURITY.md).
+
 ## Known limitations (honest disclosure)
 
 - **No egress sanitization**: ZCode PostToolUse output has no tool_result rewrite capability (verified against harness source), so `echo $GH_TOKEN` reflow has no automatic defense — forbidden by the skill only

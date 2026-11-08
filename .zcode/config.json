@@ -1,0 +1,7 @@
+{
+  "plugins": {
+    "enabledPlugins": {
+      "secret-env@secret-env-turso": true
+    }
+  }
+}

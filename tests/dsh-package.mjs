@@ -36,7 +36,7 @@ const walk = (dir, out = []) => {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) {
-      if (name === "node_modules") continue;
+      if (name === "node_modules" || name === "tests") continue; // tests/ 不随包发布（files 清单不含），免检
       walk(p, out);
     } else if (/\.(js|mjs|ts)$/.test(name)) out.push(p);
   }

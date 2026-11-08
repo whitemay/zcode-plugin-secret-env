@@ -1,4 +1,6 @@
 // DSH 协议客户端回归：假 CLI 脚本覆盖 成功/业务拒绝/非 JSON/超时/缺失二进制/协议不匹配。
+// 现行协议（三分法）：info 握手 + parse（stdin {command} → {action: pass|inject|reject, token?}）。
+// inject（redeem）由改写命令里的 eval 链消费，不经 client——client 无此方法。
 // 运行：bun tests/dsh-protocol.mjs（不碰真凭据、不依赖真实安装）
 import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -17,28 +19,27 @@ const writeScript = (name, body) => {
 const INFO = {
   protocol: 1,
   version: "test",
-  entries: [{ name: "GH_TOKEN", aliases: ["GITHUB_TOKEN"], description: "demo" }],
-  rules: { guardPaths: [".config/secret-env"] },
-  providers: ["keychain", "bitwarden", "viking", "onepassword"],
+  entries: [{ name: "GH_TOKEN", desc: "demo" }],
+  guard_paths: [".config/secret-env"],
 };
 
 const ok = writeScript("ok.mjs", `
 const cmd = process.argv[2];
 const info = ${JSON.stringify(INFO)};
 if (cmd === "info") process.stdout.write(JSON.stringify(info));
-else if (cmd === "inject") process.stdout.write(JSON.stringify({ command: ". /tmp/x.sh; ls", envFile: "/tmp/x.sh" }));
-else process.stdout.write(JSON.stringify({ status: "ready", envName: "GH_TOKEN" }));
+else if (cmd === "parse") {
+  const req = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+  if (req.command === "dump") process.stdout.write(JSON.stringify({ action: "reject", reason: "dump intent" }));
+  else if (req.command.includes("$")) process.stdout.write(JSON.stringify({ action: "inject", token: "tok123", names: ["GH_TOKEN"] }));
+  else process.stdout.write(JSON.stringify({ action: "pass" }));
+}
 `);
 const mismatch = writeScript("mismatch.mjs", `process.stdout.write(JSON.stringify({ protocol: 99 }));`);
-const deny = writeScript("deny.mjs", `
-process.stdout.write(JSON.stringify({ error: "引用位于单引号内", code: "inject" }));
-process.exit(2);
-`);
 const badJson = writeScript("bad-json.mjs", `process.stdout.write("not json");`);
 const slow = writeScript("slow.mjs", `
 const cmd = process.argv[2];
 if (cmd === "info") process.stdout.write(${JSON.stringify(JSON.stringify(INFO))});
-else setTimeout(() => process.stdout.write(JSON.stringify({ command: "x", envFile: null })), 400);
+else setTimeout(() => process.stdout.write(JSON.stringify({ action: "pass" })), 400);
 `);
 const missing = join(DIR, "does-not-exist.mjs");
 
@@ -57,19 +58,18 @@ const expectError = async (label, fn, code) => {
   const client = createClient({ bin: ok });
   const info = requireProtocol(client.infoSync());
   assert.equal(info.version, "test");
-  assert.equal(info.rules.guardPaths[0], ".config/secret-env");
+  assert.equal(info.guard_paths[0], ".config/secret-env");
 
   const asyncInfo = requireProtocol(await client.info());
   assert.deepEqual(asyncInfo.entries, INFO.entries);
 
-  const injected = await client.inject({ command: "echo hi", session: "s1" });
-  assert.equal(injected.command, ". /tmp/x.sh; ls");
-  assert.equal(injected.envFile, "/tmp/x.sh");
+  const injected = await client.parse({ command: "echo $GH_TOKEN" });
+  assert.equal(injected.action, "inject");
+  assert.equal(injected.token, "tok123");
 
-  const stored = await client.store({ name: "x" });
-  assert.equal(stored.status, "ready");
-  assert.equal(stored.envName, "GH_TOKEN");
-  console.log("  ✅ info/infoSync/inject/store 正常");
+  const passed = await client.parse({ command: "echo hi" });
+  assert.equal(passed.action, "pass");
+  console.log("  ✅ info/infoSync/parse（inject+pass）正常");
 }
 
 // ---------- 版本握手 ----------
@@ -82,24 +82,26 @@ const expectError = async (label, fn, code) => {
 
 // ---------- 错误映射 ----------
 {
-  const client = createClient({ bin: deny });
-  await expectError("业务拒绝", () => client.inject({ command: "x" }), "inject");
-  try { await client.inject({ command: "x" }); } catch (e) { assert.match(e.message, /单引号/); }
-  console.log("  ✅ 业务拒绝（exit 2）映射");
+  // parse 的 reject 以 JSON action 表达（退出码仍 0），不映射为 CliError——判定在调用方
+  const client = createClient({ bin: ok });
+  const rejected = await client.parse({ command: "dump" });
+  assert.equal(rejected.action, "reject");
+  assert.match(rejected.reason, /dump/);
+  console.log("  ✅ 业务拒绝（JSON action，exit 0）形态");
 }
 {
-  await expectError("非 JSON", () => createClient({ bin: badJson }).inject({ command: "x" }), "bad-output");
+  await expectError("非 JSON", () => createClient({ bin: badJson }).parse({ command: "x" }), "bad-output");
   console.log("  ✅ 非 JSON 输出拒绝");
 }
 {
-  await expectError("超时", () => createClient({ bin: slow, timeoutMs: 100 }).inject({ command: "x" }), "timeout");
+  await expectError("超时", () => createClient({ bin: slow, timeoutMs: 100 }).parse({ command: "x" }), "timeout");
   console.log("  ✅ 超时拒绝");
 }
 {
   await expectError("缺失二进制（同步）", async () => createClient({ bin: missing }).infoSync(), "spawn");
-  await expectError("缺失二进制（异步）", () => createClient({ bin: missing }).inject({ command: "x" }), "spawn");
-  try { createClient({ bin: missing }).infoSync(); } catch (e) { assert.match(e.message, /全局安装/); }
-  console.log("  ✅ CLI 缺失时给出安装指引");
+  await expectError("缺失二进制（异步）", () => createClient({ bin: missing }).parse({ command: "x" }), "spawn");
+  try { createClient({ bin: missing }).infoSync(); } catch (e) { assert.match(e.message, /无法启动/); }
+  console.log("  ✅ CLI 缺失时给出指引");
 }
 
 rmSync(DIR, { recursive: true, force: true });
