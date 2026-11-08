@@ -5,7 +5,8 @@
 use argon2::{Algorithm, Argon2, Params, Version};
 use rand::RngCore;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 #[cfg(unix)]
 use tokio::net::UnixStream;
 
@@ -34,12 +35,48 @@ fn dir() -> std::path::PathBuf {
 }
 
 fn vault_path() -> std::path::PathBuf { dir().join("vault.db") }
+#[cfg(unix)]
 fn socket_path() -> std::path::PathBuf { dir().join("daemon.sock") }
+/// windows 端点：每用户独立管道名（同机多用户互不撞名）；取不到用户名宁可失败
+#[cfg(windows)]
+fn pipe_name() -> std::io::Result<String> {
+    let user = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .map_err(|_| std::io::Error::other("USERNAME not set: cannot derive pipe name"))?;
+    Ok(format!(r"\\.\pipe\rsenv-{user}"))
+}
 fn salt_path() -> std::path::PathBuf { dir().join(".vault.salt") }
 
+/// 客户端探活/通话统一入口：连上 daemon 端点（unix socket / named pipe）
+async fn daemon_connect() -> std::io::Result<Conn> {
+    #[cfg(unix)]
+    { UnixStream::connect(socket_path()).await }
+    #[cfg(windows)]
+    {
+        use tokio::net::windows::named_pipe::ClientOptions;
+        // ERROR_PIPE_BUSY = 实例都在忙：短暂重试（与 unix Connection refused 同级的「暂不可连」）
+        for _ in 0..20 {
+            match ClientOptions::new().open(pipe_name()?) {
+                Ok(c) => return Ok(c),
+                Err(e) if e.raw_os_error() == Some(231) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(std::io::Error::other("pipe busy: no free pipe instance"))
+    }
+}
+
+/// 纯探活：daemon 端点此刻可连（login 幂等判断 / passwd 停 daemon 前后轮询共用）
+async fn daemon_reachable() -> bool {
+    daemon_connect().await.is_ok()
+}
+
 /// 连接级鉴权：peer 进程的真身（内核实查，不可谎报）是否为本二进制。
-/// macOS: LOCAL_PEERPID 拿 peer pid → proc_pidpath；Linux: SO_PEERCRED → /proc/<pid>/exe。
-fn peer_exes_self(fd: std::os::fd::RawFd) -> bool {
+/// macOS: LOCAL_PEERPID 拿 peer pid → proc_pidpath；Linux: SO_PEERCRED → /proc/<pid>/exe；
+/// Windows: GetNamedPipeClientProcessId → OpenProcess+QueryFullProcessImageName（参数=句柄 as isize，平台各自转换）。
+fn peer_exes_self(fd: isize) -> bool {
     fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
         match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
             (Ok(x), Ok(y)) => x == y,
@@ -48,6 +85,7 @@ fn peer_exes_self(fd: std::os::fd::RawFd) -> bool {
     }
     #[cfg(target_os = "macos")]
     unsafe {
+        let fd: std::os::fd::RawFd = fd as _;
         let mut pid: libc::pid_t = 0;
         let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
         if libc::getsockopt(fd, 0, libc::LOCAL_PEERPID, &mut pid as *mut _ as *mut libc::c_void, &mut len) != 0 {
@@ -63,6 +101,7 @@ fn peer_exes_self(fd: std::os::fd::RawFd) -> bool {
     }
     #[cfg(target_os = "linux")]
     unsafe {
+        let fd: std::os::fd::RawFd = fd as _;
         let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
         let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
         if libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_PEERCRED, &mut cred as *mut _ as *mut libc::c_void, &mut len) != 0 {
@@ -73,7 +112,29 @@ fn peer_exes_self(fd: std::os::fd::RawFd) -> bool {
         let Ok(me) = std::env::current_exe() else { return false };
         same_file(&exe, &me)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows_sys::Win32::System::Pipes::GetNamedPipeClientProcessId;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        let hpipe: HANDLE = fd as HANDLE;
+        let mut pid: u32 = 0;
+        if GetNamedPipeClientProcessId(hpipe, &mut pid) == 0 || pid == 0 { return false; }
+        let proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if proc.is_null() { return false; }
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(proc, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len) != 0;
+        let _ = CloseHandle(proc);
+        if !ok { return false; }
+        let peer = String::from_utf16_lossy(&buf[..len as usize]);
+        let Ok(me) = std::env::current_exe() else { return false };
+        same_file(std::path::Path::new(&peer), &me)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         let _ = fd;
         false
@@ -92,8 +153,11 @@ fn load_or_create_salt() -> Result<String, Box<dyn std::error::Error>> {
         rand::thread_rng().fill_bytes(&mut b);
         let s: String = b.iter().map(|x| format!("{x:02x}")).collect();
         std::fs::write(&p, &s)?;
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))?;
+        }
         Ok(s)
     }
 }
@@ -187,13 +251,16 @@ fn audit(event: &str, fields: &[(&str, String)]) {
     let line = json!(obj).to_string();
     let p = dir().join("audit.jsonl");
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
-        use std::os::unix::fs::PermissionsExt;
         let _ = f.write_all(line.as_bytes()).and_then(|_| f.write_all(b"\n"));
-        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+        }
     }
 }
 
-// ---------- socket 协议（newline-JSON） ----------
+// ---------- daemon 协议（newline-JSON） ----------
 
 #[derive(Clone)]
 struct DaemonState {
@@ -207,18 +274,21 @@ struct DaemonState {
 
 
 async fn handle_conn(
-    stream: UnixStream,
+    stream: Conn,
     state: std::sync::Arc<tokio::sync::RwLock<DaemonState>>,
 ) {
     // 连接级鉴权：只认本二进制发起的连接（内核实查 peer exe，不可谎报、不可转移）
-    use std::os::fd::AsRawFd;
-    if !peer_exes_self(stream.as_raw_fd()) {
+    #[cfg(unix)]
+    let auth_fd = { use std::os::fd::AsRawFd; stream.as_raw_fd() as isize };
+    #[cfg(windows)]
+    let auth_fd = { use std::os::windows::io::AsRawHandle; stream.as_raw_handle() as isize };
+    if !peer_exes_self(auth_fd) {
         audit("peer-rejected", &[]);
-        let (_, mut writer) = stream.into_split();
+        let (_, mut writer) = tokio::io::split(stream);
         let _ = write_reply(&mut writer, &json!({"ok": false, "error": "rejected: caller is not rsenv"})).await;
         return;
     }
-    let (reader, mut writer) = stream.into_split();
+    let (reader, mut writer) = tokio::io::split(stream);
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let req: Value = match serde_json::from_str(&line) {
@@ -231,14 +301,15 @@ async fn handle_conn(
         let _ = write_reply(&mut writer, &reply).await;
         if done || quit { break; }
         if reply.get("_shutdown").is_some() {
-            // logout：daemon 结束会话退场（reply 已送达）
+            // logout：daemon 结束会话退场（reply 已送达）；unix 侧 socket 文件随进程消亡清掉
+            #[cfg(unix)]
             let _ = std::fs::remove_file(socket_path());
             std::process::exit(0);
         }
     }
 }
 
-async fn write_reply(w: &mut tokio::net::unix::OwnedWriteHalf, v: &Value) -> std::io::Result<()> {
+async fn write_reply<W: AsyncWrite + Unpin>(w: &mut W, v: &Value) -> std::io::Result<()> {
     w.write_all(format!("{v}\n").as_bytes()).await?;
     w.flush().await
 }
@@ -686,6 +757,7 @@ async fn open_conn(state: &std::sync::Arc<tokio::sync::RwLock<DaemonState>>) -> 
 
 // ---------- 客户端 ----------
 
+#[cfg(target_os = "macos")]
 fn daemon_launchd_label() -> &'static str { "com.foperate.rsenv" }
 
 /// 平台分流：daemon「拉起且不被宿主连坐」各接各地头蛇——
@@ -697,10 +769,10 @@ async fn ensure_daemon(exe: &std::path::Path, cipher: &str) -> Result<(), Box<dy
     ensure_daemon_via_launchd(exe, cipher).await
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 async fn ensure_daemon(exe: &std::path::Path, _cipher: &str) -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::process::CommandExt;
-    if UnixStream::connect(socket_path()).await.is_ok() { return Ok(()); }
+    if daemon_connect().await.is_ok() { return Ok(()); }
     // 真 daemon 化：只用 setsid（勿叠加 process_group(0)——setpgid 先把子进程变组长，
     // 组长调 setsid 返回 EPERM 静默失败）；失败必须报错（宁可失败）
     let child = unsafe {
@@ -721,16 +793,43 @@ async fn ensure_daemon(exe: &std::path::Path, _cipher: &str) -> Result<(), Box<d
     };
     drop(child);
     for _ in 0..100 {
-        if UnixStream::connect(socket_path()).await.is_ok() { return Ok(()); }
+        if daemon_connect().await.is_ok() { return Ok(()); }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     Err("daemon socket not ready after spawn".into())
 }
 
+/// windows：无 launchd 等价托管，detached spawn（DETACHED_PROCESS 脱离控制台 +
+/// CREATE_NEW_PROCESS_GROUP 脱离父进程组）；宿主连坐风险挂账真机观察。
+/// provider 工具路径经 --path 下发（与 unix 同构：不传则使用时宁可失败）。
+#[cfg(windows)]
+async fn ensure_daemon(exe: &std::path::Path, _cipher: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::windows::process::CommandExt;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    if daemon_connect().await.is_ok() { return Ok(()); }
+    let child = std::process::Command::new(exe)
+        .arg("serve")
+        .arg("--vault-dir").arg(dir())
+        .arg("--cipher").arg(_cipher)
+        .arg("--path").arg(std::env::var("PATH").unwrap_or_default())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+        .spawn()?;
+    drop(child);
+    for _ in 0..100 {
+        if daemon_connect().await.is_ok() { return Ok(()); }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    Err("daemon pipe not ready after spawn".into())
+}
+
 /// launchd 托管拉起 daemon（macOS 专用）：责任进程=launchd，
 /// 免受 GUI 应用退出时 Dock 按责任进程链 SIGTERM 连坐（setsid 只是必要非充分）。
+#[cfg(target_os = "macos")]
 async fn ensure_daemon_via_launchd(exe: &std::path::Path, cipher: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if UnixStream::connect(socket_path()).await.is_ok() { return Ok(()); }
+    if daemon_connect().await.is_ok() { return Ok(()); }
     // 残留作业（daemon 已退场但 label 还挂着）先清掉，submit 才不会撞名
     let _ = std::process::Command::new("launchctl").args(["remove", daemon_launchd_label()]).output();
     let mut spawn_cmd = std::process::Command::new("launchctl");
@@ -764,7 +863,7 @@ async fn ensure_daemon_via_launchd(exe: &std::path::Path, cipher: &str) -> Resul
         return Err(format!("launchctl submit failed: {}", String::from_utf8_lossy(&out.stderr).trim()).into());
     }
     for _ in 0..100 {
-        if UnixStream::connect(socket_path()).await.is_ok() { return Ok(()); }
+        if daemon_connect().await.is_ok() { return Ok(()); }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     Err("daemon socket not ready after launchctl submit".into())
@@ -773,15 +872,25 @@ async fn ensure_daemon_via_launchd(exe: &std::path::Path, cipher: &str) -> Resul
 /// 在当前进程 PATH 里找工具的绝对路径（找不到=None，调用侧不传、使用时宁可失败）
 fn which_tool(bin: &str) -> Option<std::path::PathBuf> {
     let path = std::env::var("PATH").ok()?;
-    use std::os::unix::fs::PermissionsExt;
-    std::env::split_paths(&path).map(|d| d.join(bin)).find(|p| {
-        p.is_file() && std::fs::metadata(p).map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)
-    })
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::env::split_paths(&path).map(|d| d.join(bin)).find(|p| {
+            p.is_file() && std::fs::metadata(p).map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+        })
+    }
+    #[cfg(windows)]
+    {
+        let name = if bin.ends_with(".exe") { bin.to_string() } else { format!("{bin}.exe") };
+        std::env::split_paths(&path).map(|d| d.join(&name)).find(|p| p.is_file())
+    }
+    #[cfg(not(any(unix, windows)))]
+    { let _ = bin; None }
 }
 
 async fn client_call(req: &Value) -> Result<Value, Box<dyn std::error::Error>> {
-    let stream = UnixStream::connect(socket_path()).await?;
-    let (r, mut w) = stream.into_split();
+    let stream = daemon_connect().await?;
+    let (r, mut w) = tokio::io::split(stream);
     w.write_all(format!("{req}\n").as_bytes()).await?;
     w.flush().await?;
     let mut reader = BufReader::new(r);
@@ -795,9 +904,12 @@ async fn client_call(req: &Value) -> Result<Value, Box<dyn std::error::Error>> {
 /// （agent 看到后应指引用户在终端执行，口令不经 agent；与 SKILL.md 口径一致）
 async fn client_call_or_no_daemon(req: &Value) -> Result<Value, Box<dyn std::error::Error>> {
     client_call(req).await.map_err(|e| {
-        // daemon 不在的两种形态都给 agent 可执行指引：socket 文件没建（未 init/首次）与
-        // 文件在但进程死（Connection refused，如宿主退出连坐/重启后）——措辞即行动指令
-        if e.to_string().contains("No such file or directory") || e.to_string().contains("Connection refused") {
+        // daemon 不在的两种形态都给 agent 可执行指引：端点不存在（未 init/首次）与
+        // 端点在但进程死（unix=Connection refused；windows=os error 2，管道实例随进程消亡）——措辞即行动指令
+        let no_daemon = e.downcast_ref::<std::io::Error>().map(|io| matches!(io.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused)
+            || io.raw_os_error() == Some(2)).unwrap_or(false);
+        if no_daemon {
             if vault_path().exists() {
                 "vault is locked: ask the user to run `rsenv login` in their terminal (password never passes through the agent)".into()
             } else {
@@ -1005,8 +1117,9 @@ async fn run(cmd: &str, args: &[String]) -> Result<(), Box<dyn std::error::Error
             // node 解释器目录（ov 是 env node 脚本）：prepend 进 daemon PATH，launchd 基线兜底
             if let Some(i) = args.iter().position(|a| a == "--node-dir") {
                 if let Some(d) = args.get(i + 1) {
-                    let base = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".into());
-                    unsafe { std::env::set_var("PATH", format!("{}:{}", d, base)); }
+                    let sep = if cfg!(windows) { ";" } else { ":" };
+                    let base = std::env::var("PATH").unwrap_or_else(|_| if cfg!(windows) { r"C:\Windows\System32".into() } else { "/usr/bin:/bin".into() });
+                    unsafe { std::env::set_var("PATH", format!("{}{sep}{}", d, base)); }
                 }
             }
             // 工具绝对路径（login 用自身 PATH which 出来，没找到的不传）：ov/bw/op 各一
@@ -1018,22 +1131,47 @@ async fn run(cmd: &str, args: &[String]) -> Result<(), Box<dyn std::error::Error
                 }
             }
             std::fs::create_dir_all(dir())?;
-            // launchd 托管形态：serve 恒以 locked 态启动，key 由 login 经 socket `unlock` op 传入
-            // （stdin 管道通道废除——launchctl submit 无法喂 stdin；socket 0600+peer-exe 同信任域）；
-            // 手动 serve 亦为 locked 态
+            // launchd 托管形态：serve 恒以 locked 态启动，key 由 login 经端点 `unlock` op 传入
+            // （stdin 管道通道废除——launchctl submit 无法喂 stdin；unix socket 0600 / windows
+            // 管道默认 ACL（仅本用户+管理员），叠加 peer-exe 同信任域）；手动 serve 亦为 locked 态
             let preloaded: Option<String> = None;
-            let sp = socket_path();
-            let _ = std::fs::remove_file(&sp);
-            let listener = UnixListener::bind(&sp)?;
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&sp, std::fs::Permissions::from_mode(0o600))?;
+            #[cfg(unix)]
+            let (listen_addr, listener) = {
+                let sp = socket_path();
+                let _ = std::fs::remove_file(&sp);
+                let listener = tokio::net::UnixListener::bind(&sp)?;
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&sp, std::fs::Permissions::from_mode(0o600))?;
+                (sp.display().to_string(), listener)
+            };
+            #[cfg(windows)]
+            let listen_addr = pipe_name()?;
             let state = std::sync::Arc::new(tokio::sync::RwLock::new(DaemonState { key: preloaded, cipher, slots: std::collections::HashMap::new() }));
             audit("daemon-start", &[]);
-            eprintln!("rsenv: listening on {}", sp.display());
+            eprintln!("rsenv: listening on {}", listen_addr);
+            // accept 循环双形态：unix=listener.accept()；windows=单实例 NamedPipeServer 逐个
+            // connect().await，接受连接后立即 create 下一实例顶上（忙时客户端侧重试兜底）
+            #[cfg(windows)]
+            let mut server = {
+                use tokio::net::windows::named_pipe::ServerOptions;
+                ServerOptions::new().first_pipe_instance(true).create(listen_addr.clone())?
+            };
             loop {
-                let (stream, _) = listener.accept().await?;
-                let st = state.clone();
-                tokio::spawn(handle_conn(stream, st));
+                #[cfg(unix)]
+                {
+                    let (stream, _) = listener.accept().await?;
+                    let st = state.clone();
+                    tokio::spawn(handle_conn(stream, st));
+                }
+                #[cfg(windows)]
+                {
+                    let st = state.clone();
+                    tokio::spawn(handle_conn(server, st));
+                    server = {
+                        use tokio::net::windows::named_pipe::ServerOptions;
+                        ServerOptions::new().create(listen_addr.clone())?
+                    };
+                }
             }
         }
         "init" => {
@@ -1074,7 +1212,7 @@ async fn run(cmd: &str, args: &[String]) -> Result<(), Box<dyn std::error::Error
         }
         "login" => {
             // 幂等：daemon 已在跑且已解锁 → 静默退出（口令都不问）；locked 态（launchd 刚拉起）继续走解锁
-            if UnixStream::connect(socket_path()).await.is_ok() {
+            if daemon_reachable().await {
                 let reply = client_call(&json!({"op": "status"})).await?;
                 if reply.get("unlocked").and_then(Value::as_bool) == Some(true) {
                     return Ok(());
@@ -1339,7 +1477,8 @@ async fn run(cmd: &str, args: &[String]) -> Result<(), Box<dyn std::error::Error
         }
         "logout" => {
             client_call_or_no_daemon(&json!({"op": "logout"})).await?;
-            // launchd 作业随 daemon 退场清掉，避免残留 label 阻塞下次 submit
+            // launchd 作业随 daemon 退场清掉，避免残留 label 阻塞下次 submit（macOS 专属）
+            #[cfg(target_os = "macos")]
             let _ = std::process::Command::new("launchctl").args(["remove", daemon_launchd_label()]).output();
             println!("logged out, daemon stopped");
         }
@@ -1362,14 +1501,14 @@ async fn run(cmd: &str, args: &[String]) -> Result<(), Box<dyn std::error::Error
             if new_pw.is_empty() { return Err("empty new password".into()); }
 
             // 1) 停 daemon（若有）
-            let daemon_was_up = UnixStream::connect(socket_path()).await.is_ok();
+            let daemon_was_up = daemon_reachable().await;
             if daemon_was_up {
                 let reply = client_call(&json!({"op": "logout"})).await?;
                 if !reply.get("ok").and_then(Value::as_bool).unwrap_or(false) {
                     return Err(reply.get("error").and_then(Value::as_str).unwrap_or("logout failed").into());
                 }
                 for _ in 0..50 {
-                    if UnixStream::connect(socket_path()).await.is_err() { break; }
+                    if !daemon_reachable().await { break; }
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
             }

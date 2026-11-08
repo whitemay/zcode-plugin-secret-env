@@ -26,12 +26,12 @@ _senv_inj="$($SENV_BIN inject <token>)" && eval "$_senv_inj" && { <原命令>; }
 
 值经 `eval` 进入子进程环境——不进命令文本、不进 argv、不进模型上下文、不落盘。token 一次性（消费即删），已消费/失效则链路短路、原命令不执行（fail-closed）。隐式读环境变量的场景由 skill 引导 agent 显式化引用来触发。
 
-- **双后端**：`senv`（缺省，bun/node CLI，keepassxc + secrets.json）与 `rsenv`（可选，Rust 单二进制，turso 加密库）实现同一宿主协议（[docs/HOST-PROTOCOL.md](docs/HOST-PROTOCOL.md)），插件按协议匹配、不按二进制名分支。解析链：`SENV_BIN` 环境变量 > secrets.json 的 `"$backend"` 键 > 缺省 senv（secret-env 优先、rsenv 兜底）
-- **槽位 daemon**：两端同为内存槽位。rsenv daemon 承载加密库（login 生命周期）；senv daemon 是纯 token map，`parse` 按需自动拉起、无 login、崩了自动重拉——agent 与用户均无需管理
-- **provider（senv）**：`keychain://`（kdbx 库或系统钥匙串）/ `viking://`（OpenViking privacy 层）/ `bitwarden://`（Bitwarden CLI）/ `onepassword://`（1Password CLI）
+- **槽位 daemon**：值存进内存槽位（纯 token map），`parse` 按需自动拉起、无 login、崩了自动重拉——agent 与用户均无需管理
+- **provider**：`keychain://`（kdbx 库或系统钥匙串）/ `viking://`（OpenViking privacy 层）/ `bitwarden://`（Bitwarden CLI）/ `onepassword://`（1Password CLI）
 - **dump 黑名单**：命令同时含密钥引用与倾泻意图（`env` / `printenv` / 裸 `set` / 裸 `export`）才拒绝
 - **单引号禁忌**：引用落在单引号内不会被展开 → 整条命令拒绝（宁可失败，不做魔法）
 - **显式化约定**：钩子是纯文本扫描的机械层；工具隐式消费环境变量（如裸 `gh pr list` 读 `GH_TOKEN`）由模型按 skill 引导显式写成 `GH_TOKEN=$GH_TOKEN gh pr list`
+- **可选后端**：`rsenv`（Rust 单二进制，turso 加密库）实现同一宿主协议，可作为 senv 的替换后端——见 [rust/rsenv/README.md](rust/rsenv/README.md)
 
 ## 与其它 agent harness 协作
 
@@ -49,20 +49,7 @@ OPENAI_API_KEY=$OPENAI_API_KEY my-cli        # 同一句式适用于一切环境
 | 环境变量注入 | 命令中显式 `$`VAR` 引用 → 钩子注入子进程环境 | 零代码 | 一切「凭据走环境变量」的 harness（生态惯例） |
 | 拦截点适配器 | 按宿主改写工具调用（ZCode PreToolUse 钩子 / opencode 插件 / DSH cordis 包装器） | 每宿主一次适配 | harness 自己作为 agent 跑 Bash、其命令需要注入的场景 |
 
-两级可组合：ZCode 内的 agent 以子进程调用另一 harness（凭据同样经钩子注入），在 harness 之间流转而全程不入模型上下文。完全没有适配器的宿主，也可以在 agent 的 Bash 里走 `rsenv run`（见下节）兜底。
-
-## rsenv run — agent 宿主之外的注入通道（rsenv 后端）
-
-以上都发生在 agent 宿主之内。宿主之外——裸终端、临时命令、脚本、cron、launchd/systemd 服务——注入通道是 `rsenv run` 命令。它读同一份配置，经同样的 provider 解析具名条目，带着它们 exec 目标命令：stdio 继承、退出码透传，值不出现在任何地方——不在命令行上、不在 rc 文件里、不在 shell 历史里。
-
-```bash
-rsenv run GH_TOKEN -- gh pr list              # 解析单条并执行
-rsenv run GH_TOKEN BW_SESSION -- ./deploy.sh  # 一次注入多条
-rsenv run DEEPSEEK_API_KEY -- pi              # 带着密钥环境启动一个 agent 宿主
-```
-
-具名形式是默认也是推荐用法。常驻服务可用它作启动入口（如 systemd `ExecStart=/usr/local/bin/rsenv run BW_SESSION -- my-service`），服务定义文件里同样不落明文。
-
+两级可组合：ZCode 内的 agent 以子进程调用另一 harness（凭据同样经钩子注入），在 harness 之间流转而全程不入模型上下文。完全没有适配器的宿主，可走可选 rsenv 后端的 `rsenv run` 通道兜底（见 [rust/rsenv/README.md](rust/rsenv/README.md)）。
 
 ## 安装
 
@@ -74,7 +61,7 @@ rsenv run DEEPSEEK_API_KEY -- pi              # 带着密钥环境启动一个 a
 npm i -g @foperate/secret-env   # 或在仓库内 bun link，注册 secret-env 与 senv 双命令名（同一 CLI，短别名）
 ```
 
-这是缺省后端 **senv**。可选安装 **rsenv**（Rust 单二进制，turso 加密库，`cargo install --path rust/rsenv` 或 `cargo install rsenv`）——两者都装时缺省仍走 senv；要切 rsenv，在 `~/.config/secret-env/secrets.json` 顶层加 `"$backend": "rsenv"`，或临时 `SENV_BIN=$(which rsenv)`。
+这是缺省后端 **senv**。可选的 rsenv 后端（Rust 单二进制）见 [rust/rsenv/README.md](rust/rsenv/README.md)。
 
 ZCode 壳：Plugin Marketplace → Add Marketplace 粘贴本仓库根 → Install **secret-env**。只需主包——marketplace 安装的是壳的声明文件（hooks.json、plugin.json、skills），**不执行任何包管理器**，所以不会带来 `secret-env` 命令。其 hooks 调用裸命令 `secret-env`、MCP 注册调 `senv mcp`（子命令形态），靠 `PATH` 解析；没有上面的全局安装，插件能装上但所有 hook 全部失败。**先装全局命令，再装插件。**
 
@@ -148,10 +135,10 @@ secret-env list
 **本项目是数据流约束，不是访问控制系统。** 它保证密钥值不落盘明文、不进命令文本/argv、不进模型上下文、不进日志。它**不**保证：
 
 - 限制 agent（或任何以你的身份运行的程序）**如何使用**密钥——用在哪条命令、发往哪个端点、用多少次；
-- 防御本机同用户攻击者：vault 口令可被键盘记录，`rsenv` 二进制是用户可写文件，`audit.jsonl` 同 uid 可改写；
+- 防御本机同用户攻击者：凭据库口令可被键盘记录，本工具二进制是用户可写文件，审计日志同 uid 可改写；
 - 出口脱敏——值一旦进入消费端（`curl`、脚本），是否离开机器不由本工具控制。
 
-命令守卫（受保护库文件/单引号引用/倾泻意图）是**防误触**，不是边界：脚本嵌套（`sh x.sh` 内部再调 `rsenv`）可完全绕过宿主钩子。`rsenv get` 按设计会把明文打到 stdout（用户自查用），agent 侧没有强制拦截——"agent 不用它"是纪律，不是机制。
+命令守卫（受保护库文件/单引号引用/倾泻意图）是**防误触**，不是边界：脚本嵌套（`sh x.sh` 内部再调 CLI）可完全绕过宿主钩子。终端取值类命令（如 `rsenv get`）按设计会把明文打到 stdout（用户自查用），agent 侧没有强制拦截——"agent 不用它"是纪律，不是机制。
 
 若真要约束"能力"，请在**有权威的地方**做：签发短时/最小权限凭据（fine-grained PAT、只读数据库账号、STS）、按用途拆分条目，或在服务前放置执行策略的代理。完整推理与已放弃的方案见 [docs/SECURITY.md](./docs/SECURITY.md)。
 

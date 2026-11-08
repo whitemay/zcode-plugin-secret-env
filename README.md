@@ -26,12 +26,12 @@ _senv_inj="$($SENV_BIN inject <token>)" && eval "$_senv_inj" && { <original comm
 
 Values enter the subprocess environment via `eval` — never the command text, never argv, never the model context, never the disk. Tokens are one-time (consumed on use); a consumed or stale token short-circuits the chain and the original command does not run (fail-closed). For implicit env consumers the skill guides the agent to make the reference explicit.
 
-- **Dual backend**: `senv` (default; bun/node CLI, keepassxc + secrets.json) and `rsenv` (optional; single Rust binary, turso encrypted vault) implement the same host protocol ([docs/HOST-PROTOCOL.md](docs/HOST-PROTOCOL.md)); adapters match on the protocol, never on the binary name. Resolution: `SENV_BIN` env > `"$backend"` key in secrets.json > default senv (secret-env first, rsenv fallback)
-- **Slot daemon**: in-memory on both backends. The rsenv daemon guards the encrypted vault (login lifecycle); the senv daemon is a pure token map, auto-spawned on demand by `parse` — no login, no management, respawned if it dies
-- **Providers (senv)**: `keychain://` (kdbx vault or system keychain) / `viking://` (OpenViking privacy layer via `ov privacy resolve`) / `bitwarden://` (Bitwarden CLI) / `onepassword://` (1Password CLI)
+- **Slot daemon**: values live in an in-memory slot map, auto-spawned on demand by `parse` — no login, no management, respawned if it dies
+- **Providers**: `keychain://` (kdbx vault or system keychain) / `viking://` (OpenViking privacy layer via `ov privacy resolve`) / `bitwarden://` (Bitwarden CLI) / `onepassword://` (1Password CLI)
 - **Dump blacklist**: a command is rejected only when it contains both a secret reference and a dump intent (`env` / `printenv` / bare `set` / bare `export`) at command position
 - **Single-quote taboo**: a reference inside single quotes would never expand → the whole command is rejected (fail loudly, no magic)
 - **Explicit-reference convention**: the hook is a dumb text scanner; tools that consume env vars implicitly (e.g. bare `gh pr list` reading `' + 'GH_TOKEN' + '`) are handled by the model per the skill, written explicitly as `' + 'GH_TOKEN' + '=$' + 'GH_TOKEN' + ' gh pr list`
+- **Optional backend**: `rsenv` (single Rust binary, turso encrypted vault) implements the same host protocol and can replace senv — see [rust/rsenv/README.md](rust/rsenv/README.md)
 
 ## Working with other agent harnesses
 
@@ -49,20 +49,7 @@ This forms a two-tier integration spectrum:
 | Env-var injection | explicit `$`VAR` reference in the command → hook injects into the subprocess env | zero code | every harness whose credentials come from env vars (the common convention) |
 | Interception adapters | per-host rewrite of tool calls (ZCode PreToolUse hook / opencode plugin / DSH cordis wrapper) | one adapter per host | hosts where the *agent's own Bash commands* need injection |
 
-The two compose: an agent running inside ZCode can invoke another harness as a subprocess, and credentials flow harness-to-harness without ever entering the model context. For a host with no adapter at all, driving it through `rsenv run` (below) from inside the agent's Bash is the escape hatch (rsenv backend).
-
-## rsenv run — injection outside agent hosts (rsenv backend)
-
-Everything above happens inside an agent host. Outside one — bare terminal, ad-hoc commands, scripts, cron, launchd/systemd units — `rsenv run` is the injection channel. It reads the same secrets file, resolves the named entries through the same providers, and execs the command with them in the subprocess environment: stdio inherited, exit code passed through, and the value appears nowhere — not on the command line, not in rc files, not in shell history.
-
-```bash
-rsenv run GH_TOKEN -- gh pr list            # resolve one entry and run
-rsenv run GH_TOKEN BW_SESSION -- ./deploy.sh  # several entries at once
-rsenv run DEEPSEEK_API_KEY -- pi            # launch an agent host with its key in env
-```
-
-The named form is the default and recommended one. For long-running services, `rsenv run` works as the unit's entry point (e.g. systemd `ExecStart=/usr/local/bin/rsenv run BW_SESSION -- my-service`), so plaintext never appears in the unit file either.
-
+The two compose: an agent running inside ZCode can invoke another harness as a subprocess, and credentials flow harness-to-harness without ever entering the model context. For a host with no adapter at all, the optional rsenv backend's `rsenv run` channel is the escape hatch (see [rust/rsenv/README.md](rust/rsenv/README.md)).
 
 ## Install
 
@@ -73,6 +60,8 @@ Global command (the real body). It is **required** for ZCode and opencode — ZC
 ```bash
 npm i -g @foperate/secret-env   # or `bun link` inside the repo, which registers secret-env and senv (same CLI, short alias)
 ```
+
+This is the default **senv** backend. The optional rsenv backend (single Rust binary) is documented in [rust/rsenv/README.md](rust/rsenv/README.md).
 
 ZCode shell: Plugin Marketplace → Add Marketplace, paste this repo root → Install **secret-env**. Main package only — the marketplace step installs the shell's declarations (hooks.json, plugin.json, skills) but **does not run any package manager**, so it does not bring the `secret-env` command with it. Its hooks invoke the bare command `secret-env` and MCP registration invokes `senv mcp`, both resolved through `PATH`; without the global install above the plugin loads but every hook fails. Install the global command first, then the plugin.
 
@@ -145,10 +134,10 @@ See [adapters/zcode/secrets.example.json](./adapters/zcode/secrets.example.json)
 **This is a data-flow guard, not an access-control system.** It keeps secret values out of plaintext on disk, out of command text/argv, out of the model context and out of logs. It does **not**:
 
 - restrict what an agent (or anything running as you) may *do* with a secret — which command consumes it, where it is sent, how often;
-- defend against a local attacker running as the same user (vault password can be keylogged, the `rsenv` binary is user-writable, `audit.jsonl` is user-writable);
+- defend against a local attacker running as the same user (vault passwords can be keylogged, the tool's binaries are user-writable, audit logs are user-writable);
 - sanitize egress — once a value reaches a consumer (`curl`, a script), whether it leaves the machine is outside this tool's control.
 
-Command guards (protected vault/audit paths, single-quote references, dump intent) are **accident prevention**, not boundaries: script nesting (`sh x.sh` calling `rsenv` inside) bypasses the host hook entirely. `rsenv get` prints plaintext by design (user self-check) and is not forcibly blocked for agents — agents are told not to use it, which is discipline, not enforcement.
+Command guards (protected vault/audit paths, single-quote references, dump intent) are **accident prevention**, not boundaries: script nesting (`sh x.sh` calling the CLI inside) bypasses the host hook entirely. `rsenv get` / terminal value commands print plaintext by design (user self-check) and are not forcibly blocked for agents — agents are told not to use it, which is discipline, not enforcement.
 
 If you need to bound the *capability*, do it where authority exists: issue short-lived / least-privilege credentials (fine-grained PAT, read-only DB account, STS), split entries by purpose, or put a policy-enforcing proxy in front of the service. Full reasoning and rejected designs: [docs/SECURITY.md](./docs/SECURITY.md).
 
