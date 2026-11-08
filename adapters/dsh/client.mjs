@@ -1,4 +1,4 @@
-// DSH 适配器的 rsenv CLI 协议客户端（protocol 1）：只经子进程与 rsenv 交互，不 import 主包代码。
+// DSH 适配器的 secret-env CLI 协议客户端（protocol 1）：只经子进程与 CLI 交互，不 import 主包代码。
 // 契约：stdin 一行 JSON，stdout 一行 JSON；rsenv 侧退出码 0 成功 / 2 业务拒绝。
 // 值不经过本插件：parse 只回 {action, token?}，消费由改写命令里的 rsenv inject 完成（eval 链）。
 import { spawn, spawnSync } from "node:child_process";
@@ -51,7 +51,7 @@ export function resolveBin() {
 }
 
 export function createClient({ bin = resolveBin(), timeoutMs = 8000 } = {}) {
-  const hint = `请安装 rsenv（或 senv）并确认 ${bin} 在 PATH 上；rsenv 还需在其终端运行 rsenv login 解锁密钥库`;
+  const hint = `请安装 secret-env CLI（senv 或 rsenv）并确认 ${bin} 在 PATH 上；rsenv 后端还需在其终端运行 rsenv login 解锁密钥库`;
 
   function run(cmd, payload, { timeout = timeoutMs } = {}) {
     return new Promise((resolve, reject) => {

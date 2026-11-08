@@ -1,5 +1,5 @@
 // DSH 登记条目的纯逻辑：消息/选项文案与答案解释。
-// 条目构造与终端兜底命令已下沉到 CLI 协议（store 的 ready / command 形态），本文件不 import 主包代码。
+// 条目构造与终端兜底命令本地构造（senv set 形态）；值通道=宿主问答卡片或用户终端，不经模型。
 // PROVIDERS 只用于文案与工具 schema 兜底：权威列表来自 info.providers（协议）。
 export const PROVIDERS = ["keychain", "bitwarden", "viking", "onepassword"];
 
@@ -21,10 +21,10 @@ export const T = {
     cardQuestion:
       "secret-env 新条目登记：请选择密钥值录入方式。\n\n注意：这里提交的内容会原样写入凭据库、不经过模型，因此必须直接填写密钥本身——不要填名字、描述、占位符或「我的 token」之类的说明（模型无法校验或补全）。\n\n· 直接填写：在下方输入框填写密钥值——值明文显示在卡片中（介意旁观/录屏请改选命令行），提交后直接写入凭据库，不会进入模型上下文。\n· 命令行：选择「我希望通过命令行来完成输入」，我会给你一条在终端执行的命令（隐藏输入）。",
     commandLabel: "我希望通过命令行来完成输入",
-    commandDescription: "随后给出一条 senv add 命令，在终端执行时隐藏输入密钥值。",
+    commandDescription: "随后给出一条 senv set 命令，在终端执行时隐藏输入密钥值。",
     missingName: "缺少 name（归一化后为空）",
     badProvider: `provider 只能是 ${PROVIDERS.join(" / ")}`,
-    exists: "已存在同名条目，请换名后重调（维护已有条目请在终端用 senv add 不带 --provider）",
+    exists: "已存在同名条目，请换名后重调（维护已有条目请在终端用 senv set 不带 --provider）",
     noAgent: "无法定位调用方 agent，不能弹问答卡片",
   },
   en: {
@@ -39,10 +39,10 @@ export const T = {
     cardQuestion:
       "secret-env new entry: choose how to enter the secret.\n\nNote: whatever is submitted here is written straight to the credential store without passing through the model, so it must be the secret value itself — not a name, description, placeholder, or note like \"my token\" (the model cannot validate or complete it).\n\n· Type it: fill the field below — the value is visible on the card (avoid if others can see your screen), and is written straight to the credential store without entering model context.\n· Command line: choose \"I'll enter it via the command line\" to get a command for your terminal (hidden input).",
     commandLabel: "I'll enter it via the command line",
-    commandDescription: "Returns a senv add command that hides the input in your terminal.",
+    commandDescription: "Returns a senv set command that hides the input in your terminal.",
     missingName: "Missing name (empty after normalization)",
     badProvider: `provider must be one of ${PROVIDERS.join(" / ")}`,
-    exists: "An entry with this name already exists — pick another name (to maintain an existing entry run senv add without --provider)",
+    exists: "An entry with this name already exists — pick another name (to maintain an existing entry run senv set without --provider)",
     noAgent: "Cannot resolve the calling agent; the question card is unavailable",
   },
 }[lang];

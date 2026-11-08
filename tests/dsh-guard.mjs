@@ -85,7 +85,7 @@ const makeCtx = (answer) => {
   apply(ctx, { client: makeClient() });
   assert.equal(typeof registered.guard, "function", "apply 应注册 tools.guard");
   assert.equal(typeof registered["tools/execute"], "function", "apply 应注册 tools/execute 包装");
-  assert.equal(registered.section?.name, "rsenv", "apply 应注册 systemPrompt section");
+  assert.equal(registered.section?.name, "secret-env", "apply 应注册 systemPrompt section");
   assert.ok(registered.section.text().length > 0, "systemPrompt 文案不应为空");
   // add_secret 挂账（rsenv 尚无元数据入库子命令），工具未注册，流程成型后补断言
 

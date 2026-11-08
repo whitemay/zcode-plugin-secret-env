@@ -1,10 +1,10 @@
-// rsenv DSH 真身适配器（协议客户端形态，2026-11-07 接 rsenv 三分法）：
+// secret-env DSH 真身适配器（协议客户端，HOST-PROTOCOL 契约；后端由解析链决定 senv/rsenv）：
 //   1) tools/execute 包装 bash：调 CLI `parse`（命令文本守卫 + 取值 + 签发一次性 token），
 //      inject 回复 → 改写为 eval 链 `_senv_inj="$(<bin> inject <token>)" && eval ... && { 原命令; }`（HOST-PROTOCOL §注入链）；
 //      值不出 daemon（token 一次性消费），不进上下文；
 //   2) tools.guard 同步守卫：本地规则副本 + info 快照（受保护路径、名字清单），不 spawn 子进程；
 //   3) systemPrompt 注入已配置名字清单与用法约定（来自 info 快照）。
-// 挂账：add_secret 工具未迁移——rsenv 尚无元数据入库子命令（set 只收名字+值），等 add 流程成型。
+// 挂账：add_secret 工具未恢复——问答卡片收值 + `senv set` stdin 入库的流程待单独一轮实现与验证。
 // 不 import 主包代码：只经 CLI 协议（client.mjs）。
 // 运行时中立：node only，不用 Bun 专属 API。
 // 注：工具定义直接构造 JSON Schema 交给 ctx.tools.register，不 import defineTool（插件经 pnpm link
@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { evaluateCall, promptText } from "./guards.mjs";
 import { PROTOCOL, createClient, requireProtocol } from "./client.mjs";
 
-const LOG = join(tmpdir(), "rsenv-dsh.log");
+const LOG = join(tmpdir(), "secret-env-dsh.log");
 const log = (msg) => { try { appendFileSync(LOG, `[${new Date().toISOString()}] ${msg}\n`); } catch {} };
 
 const REFRESH_MS = 30 * 1000; // 快照过期时间：guard 每次调用顺手触发后台刷新（非阻塞）
@@ -31,7 +31,7 @@ export function buildSnapshot(info) {
 
 export const inject = ["tools", "systemPrompt"];
 
-// options.client 仅供离线测试注入假客户端；生产不传，走 createClient()（$SENV_BIN → PATH rsenv）
+// options.client 仅供离线测试注入假客户端；生产不传，走 createClient()（解析链：SENV_BIN > $backend > senv）
 export function apply(ctx, options = {}) {
   const client = options.client ?? createClient();
   const disposers = [];
@@ -41,7 +41,7 @@ export function apply(ctx, options = {}) {
   try {
     info = requireProtocol(client.infoSync());
   } catch (error) {
-    throw new Error(`rsenv 无法初始化：${error.message}`);
+    throw new Error(`secret-env 无法初始化：${error.message}`);
   }
   let snapshot = buildSnapshot(info);
   let lastRefresh = Date.now();
@@ -74,7 +74,7 @@ export function apply(ctx, options = {}) {
 
   // 清单 + 约定：等价 ZCode SessionStart 注入；配置变化在下次 assembly 反映。
   disposers.push(ctx.systemPrompt.section({
-    name: "rsenv",
+    name: "secret-env",
     order: 900,
     interpolate: false,
     text: () => promptText(snapshot),
@@ -93,10 +93,10 @@ export function apply(ctx, options = {}) {
     try {
       result = await client.parse({ command });
     } catch (error) {
-      throw new Error(`rsenv：${error.message}`); // 业务拒绝与 CLI 故障都报错（宁可失败）
+      throw new Error(`secret-env：${error.message}`); // 业务拒绝与 CLI 故障都报错（宁可失败）
     }
     if (result?.action === "reject") {
-      throw new Error(`rsenv：${result.reason ?? "command rejected by guard"}`);
+      throw new Error(`secret-env：${result.reason ?? "command rejected by guard"}`);
     }
     if (result?.action !== "inject" || !result.token) return next(); // pass / 空判定 = 零注入
 
