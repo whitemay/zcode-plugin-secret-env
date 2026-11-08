@@ -55,7 +55,7 @@ const allow = (updated) => {
   console.log(JSON.stringify(out));
   process.exit(0);
 };
-const deny = (reason) => { console.error(`rsenv: ${reason}`); process.exit(2); };
+const deny = (reason) => { console.error(`secret-env: ${reason}`); process.exit(2); };
 
 function runRsenv(args, input) {
   const r = spawnSync(BIN, args, { input: input ?? "", encoding: "utf8", timeout: 15000 });

@@ -3,6 +3,7 @@
 // 值只做等值/长度断言，不打印（断言失败也只显示长度）。
 // 注：引用文本用 "$" + 名字拼接构造，避免本会话钩子扫描示例文本。
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync, unlinkSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -218,6 +219,8 @@ try {
     check("initialize 回 serverInfo", out?.result?.serverInfo?.name === "secret-env", JSON.stringify(out).slice(0, 120));
   }
 } finally {
+  // 定点清理本 HOME 拉起的 daemon（lsof 精确匹配端点，不误杀真身）
+  spawnSync("bash", ["-c", "lsof -t '" + join(HOME, ".config/secret-env/senv.sock") + "' 2>/dev/null | xargs kill 2>/dev/null; true"]);
   rmSync(HOME, { recursive: true, force: true });
 }
 

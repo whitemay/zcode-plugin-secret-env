@@ -70,9 +70,10 @@ try {
     await new Promise((r) => setTimeout(r, 1600));
     check("过期 token 拒", run(["inject", t4]).err.includes("already-consumed"));
   }
+  // 收尾：定点清掉本测试各场景 HOME 拉起的 daemon（glob 展开 + lsof，不误杀用户真身）
+  spawnSync("bash", ["-c", `lsof -t ${tmpdir()}/senv-daemon-test-*/.config/secret-env/senv.sock 2>/dev/null | xargs kill 2>/dev/null; true`]);
 } finally {
-  // 清理本次测试拉起的全部 daemon（按 cli.mjs daemon 子命令特征）
-  spawnSync("pkill", ["-f", "senv-daemon-test"]);
+  spawnSync("bash", ["-c", `lsof -t ${tmpdir()}/senv-daemon-test-*/.config/secret-env/senv.sock 2>/dev/null | xargs kill 2>/dev/null; true`]);
 }
 
 console.log(failed === 0 ? "\n全部通过 ✅" : `\n${failed} 项失败 ❌`);

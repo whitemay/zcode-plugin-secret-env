@@ -1,12 +1,19 @@
-//! rsenv 原型：turso 加密库 + daemon（unix socket newline-JSON）+ login/get/set/lock/status。
-//! 原型边界：鉴权=连接级 peer-exe 实查（macOS LOCAL_PEERPID+proc_pidpath / Linux SO_PEERCRED+/proc/exe）+ socket 0600；inject=注入原语（env 生命周期=进程外产物，返回 JSON 由消费者负责）；run=用户态执行器（env 生命周期=子进程一次性物，退出即消失，退出码透传）
+//! rsenv 原型：turso 加密库 + daemon（newline-JSON over unix socket / windows named pipe）+ login/get/set/lock/status。
+//! 原型边界：鉴权=连接级 peer-exe 实查（macOS LOCAL_PEERPID+proc_pidpath / Linux SO_PEERCRED+/proc/exe / Windows GetNamedPipeClientProcessId+QueryFullProcessImageName）+ socket 0600（unix；windows 管道默认 ACL=本用户）；inject=注入原语（env 生命周期=进程外产物，返回 JSON 由消费者负责）；run=用户态执行器（env 生命周期=子进程一次性物，退出即消失，退出码透传）
 //! 并存口径：库/运行文件独立于 JS 版（vault.db，不动 vault.kdbx/secrets.json）。
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use rand::RngCore;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+#[cfg(unix)]
+use tokio::net::UnixStream;
+
+// 传输层：unix=UnixStream / windows=named pipe，客户端侧同一 type alias 供 client/handler 共用
+#[cfg(unix)]
+type Conn = UnixStream;
+#[cfg(windows)]
+type Conn = tokio::net::windows::named_pipe::NamedPipeClient;
 use turso::EncryptionOpts;
 
 // ---------- 路径约定（SENV_VAULT_DIR 仅测试重定向） ----------
@@ -15,7 +22,11 @@ fn dir() -> std::path::PathBuf {
     match std::env::var("SENV_VAULT_DIR") {
         Ok(d) => std::path::PathBuf::from(d),
         Err(_) => {
-            let mut p = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap();
+            let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(std::path::PathBuf::from)
+                .unwrap();
+            let mut p = home;
             p.push(".config/secret-env");
             p
         }
