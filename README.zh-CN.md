@@ -2,7 +2,7 @@
 
 **面向 AI 编码 agent 的本机凭据管理工具**：密钥从私有库直达 Bash 子进程环境，模型上下文只见占位符/变量名，永不见值。
 
-> **致 npm 审核员 / 安全扫描器**：这是一个与 doppler / bitwarden-cli / 1password-cli 同品类的开源开发者工具。它管理的是用户自己机器上的自有凭据：调用本机密钥库 CLI（macOS 钥匙串的 `security`、`bw`、`op`、`ov`），将解析出的值经 0600 临时文件注入子进程环境。不外发任何数据、无网络监听，所有外部调用均指向用户自行配置的密钥库后端。实现核心 `core.mjs`（约 400 行）完全可读。
+> **致 npm 审核员 / 安全扫描器**：这是一个与 doppler / bitwarden-cli / 1password-cli 同品类的开源开发者工具。它管理的是用户自己机器上的自有凭据：调用本机密钥库 CLI（macOS 钥匙串的 `security`、`bw`、`op`、`ov`），将解析出的值存进 daemon 内存槽位、经一次性 token 注入子进程环境（值全程不落盘）。不外发任何数据、无网络监听，所有外部调用均指向用户自行配置的密钥库后端。实现核心 `core.mjs`（约 400 行）完全可读。
 
 简体中文 | [English](./README.md)
 
@@ -18,12 +18,20 @@ OpenViking 的 privacy 区域是密钥的理想存放地，但通过 `{{ov_priva
 
 ## 机制
 
-PreToolUse(Bash) 钩子扫描命令文本中的**显式引用**（`{{secret:NAME}}` 占位符或已配置的周知 `$VAR`），经 provider 解出真值写入 0600 临时 env 文件（按命令中实际引用的名字 export，即周知原名），命令仅加 source 前缀后放行：`. <envfile>; <原命令>`。命令文本零改写；隐式读环境变量的场景由 skill 引导 agent 显式化引用来触发。文本与值分离——审计日志只见 env 文件路径。
+PreToolUse(Bash) 钩子扫描命令文本中的**显式引用**（已配置的周知 `$VAR`），把命令交 给 CLI 的 `parse` 门：守卫判定（文件提及/单引号/倾泻黑名单）→ 解析全部值 → 值存进 **daemon 内存槽位**并签发**一次性 token**；钩子把命令改写成注入链后放行：
 
-- **provider**：`keychain://`（macOS 钥匙串）/ `viking://`（OpenViking privacy 层，`ov privacy resolve`）/ `bitwarden://`（Bitwarden CLI）/ `onepassword://`（1Password CLI）
+```bash
+_senv_inj="$($SENV_BIN inject <token>)" && eval "$_senv_inj" && { <原命令>; }
+```
+
+值经 `eval` 进入子进程环境——不进命令文本、不进 argv、不进模型上下文、不落盘。token 一次性（消费即删），已消费/失效则链路短路、原命令不执行（fail-closed）。隐式读环境变量的场景由 skill 引导 agent 显式化引用来触发。
+
+- **双后端**：`senv`（缺省，bun/node CLI，keepassxc + secrets.json）与 `rsenv`（可选，Rust 单二进制，turso 加密库）实现同一宿主协议（[docs/HOST-PROTOCOL.md](docs/HOST-PROTOCOL.md)），插件按协议匹配、不按二进制名分支。解析链：`SENV_BIN` 环境变量 > secrets.json 的 `"$backend"` 键 > 缺省 senv（secret-env 优先、rsenv 兜底）
+- **槽位 daemon**：两端同为内存槽位。rsenv daemon 承载加密库（login 生命周期）；senv daemon 是纯 token map，`parse` 按需自动拉起、无 login、崩了自动重拉——agent 与用户均无需管理
+- **provider（senv）**：`keychain://`（kdbx 库或系统钥匙串）/ `viking://`（OpenViking privacy 层）/ `bitwarden://`（Bitwarden CLI）/ `onepassword://`（1Password CLI）
 - **dump 黑名单**：命令同时含密钥引用与倾泻意图（`env` / `printenv` / 裸 `set` / 裸 `export`）才拒绝
 - **单引号禁忌**：引用落在单引号内不会被展开 → 整条命令拒绝（宁可失败，不做魔法）
-- **显式化约定**：钩子是纯文本扫描的机械层；工具隐式消费环境变量（如裸 `gh pr list` 读 `' + 'GH_TOKEN' + '`）由模型按 skill 引导显式写成 `' + 'GH_TOKEN' + '=$' + 'GH_TOKEN' + ' gh pr list`
+- **显式化约定**：钩子是纯文本扫描的机械层；工具隐式消费环境变量（如裸 `gh pr list` 读 `GH_TOKEN`）由模型按 skill 引导显式写成 `GH_TOKEN=$GH_TOKEN gh pr list`
 
 ## 与其它 agent harness 协作
 
@@ -41,20 +49,19 @@ OPENAI_API_KEY=$OPENAI_API_KEY my-cli        # 同一句式适用于一切环境
 | 环境变量注入 | 命令中显式 `$`VAR` 引用 → 钩子注入子进程环境 | 零代码 | 一切「凭据走环境变量」的 harness（生态惯例） |
 | 拦截点适配器 | 按宿主改写工具调用（ZCode PreToolUse 钩子 / opencode 插件 / DSH cordis 包装器） | 每宿主一次适配 | harness 自己作为 agent 跑 Bash、其命令需要注入的场景 |
 
-两级可组合：ZCode 内的 agent 以子进程调用另一 harness（凭据同样经钩子注入），在 harness 之间流转而全程不入模型上下文。完全没有适配器的宿主，也可以在 agent 的 Bash 里走 `srun`（见下节）兜底。
+两级可组合：ZCode 内的 agent 以子进程调用另一 harness（凭据同样经钩子注入），在 harness 之间流转而全程不入模型上下文。完全没有适配器的宿主，也可以在 agent 的 Bash 里走 `rsenv run`（见下节）兜底。
 
-## srun — agent 宿主之外的注入通道
+## rsenv run — agent 宿主之外的注入通道（rsenv 后端）
 
-以上都发生在 agent 宿主之内。宿主之外——裸终端、临时命令、脚本、cron、launchd/systemd 服务——注入通道是 `srun` 命令。它读同一份配置，经同样的 provider 解析具名条目，带着它们 exec 目标命令：stdio 继承、退出码透传，值不出现在任何地方——不在命令行上、不在 rc 文件里、不在 shell 历史里。
+以上都发生在 agent 宿主之内。宿主之外——裸终端、临时命令、脚本、cron、launchd/systemd 服务——注入通道是 `rsenv run` 命令。它读同一份配置，经同样的 provider 解析具名条目，带着它们 exec 目标命令：stdio 继承、退出码透传，值不出现在任何地方——不在命令行上、不在 rc 文件里、不在 shell 历史里。
 
 ```bash
-srun GH_TOKEN -- gh pr list              # 解析单条并执行
-srun GH_TOKEN BW_SESSION -- ./deploy.sh  # 一次注入多条
-srun DEEPSEEK_API_KEY -- pi              # 带着密钥环境启动一个 agent 宿主
-srun --all -- ./legacy-tool.sh           # 注入全部已配置条目（供确实需要全量的场景）
+rsenv run GH_TOKEN -- gh pr list              # 解析单条并执行
+rsenv run GH_TOKEN BW_SESSION -- ./deploy.sh  # 一次注入多条
+rsenv run DEEPSEEK_API_KEY -- pi              # 带着密钥环境启动一个 agent 宿主
 ```
 
-具名形式是默认也是推荐用法。常驻服务可用它作启动入口（如 systemd `ExecStart=/usr/local/bin/srun BW_SESSION -- my-service`），服务定义文件里同样不落明文。
+具名形式是默认也是推荐用法。常驻服务可用它作启动入口（如 systemd `ExecStart=/usr/local/bin/rsenv run BW_SESSION -- my-service`），服务定义文件里同样不落明文。
 
 
 ## 安装
@@ -67,9 +74,11 @@ srun --all -- ./legacy-tool.sh           # 注入全部已配置条目（供确�
 npm i -g @foperate/secret-env   # 或在仓库内 bun link，注册 secret-env 与 senv 双命令名（同一 CLI，短别名）
 ```
 
+这是缺省后端 **senv**。可选安装 **rsenv**（Rust 单二进制，turso 加密库，`cargo install --path rust/rsenv` 或 `cargo install rsenv`）——两者都装时缺省仍走 senv；要切 rsenv，在 `~/.config/secret-env/secrets.json` 顶层加 `"$backend": "rsenv"`，或临时 `SENV_BIN=$(which rsenv)`。
+
 ZCode 壳：Plugin Marketplace → Add Marketplace 粘贴本仓库根 → Install **secret-env**。只需主包——marketplace 安装的是壳的声明文件（hooks.json、plugin.json、skills），**不执行任何包管理器**，所以不会带来 `secret-env` 命令。其 hooks 调用裸命令 `secret-env`、MCP 注册调 `senv mcp`（子命令形态），靠 `PATH` 解析；没有上面的全局安装，插件能装上但所有 hook 全部失败。**先装全局命令，再装插件。**
 
-opencode 壳（V2）：以**独立包** `@foperate/secret-env-opencode` 分发，需与主包**一起全局安装**（插件只做拦截转发与 skill 注册，注入真身是全局 CLI；`senv mcp` 不注册，入库走 `senv add` 终端兜底；读写工具（Read/Write/Edit）的文件守卫尚未实现——勿让 agent 直接触碰 secrets.json/vault.kdbx）：
+opencode 壳（V2）：以**独立包** `@foperate/secret-env-opencode` 分发，需与主包**一起全局安装**（插件只做拦截转发与 skill 注册，注入真身是全局 CLI；`senv mcp` 不注册，入库走 `senv set` 终端兜底；读写工具（Read/Write/Edit）的文件守卫尚未实现——勿让 agent 直接触碰 secrets.json/vault.kdbx）：
 
 ```bash
 bun install -g @foperate/secret-env @foperate/secret-env-opencode
@@ -102,14 +111,14 @@ DSH（DeepSeek Harness）bundle：**独立包 `@foperate/secret-env-dsh`**（零
 
 验证：新会话出现 `add_secret` 工具，系统提示出现已配置密钥清单（无真值）。更新：CLI 与 bundle 分别升级（两者协议版本必须匹配），改 bundle 后重启 DSH；skill symlink 随 bundle 升级自动指向新版本。卸载：`plugin_manager remove_bundle`（`@foperate/secret-env-dsh`）后删除 `~/.dsh/skills/secret-env`。给 agent 逐步执行的版本见 [docs/INSTALL-DSH.md](docs/INSTALL-DSH.md)。
 
-会话内登记（所有宿主）：agent 先通过问答与用户终审元数据——环境变量名及别名（从上下文推断 well-known 候选，或按 `KEY, alias1, alias2` 格式自定义）、可选描述、provider——然后给出一条完整的 `senv add` 命令由你在自己终端执行（隐藏输入，值不经对话）。这条终端通道是通用基线，任何宿主都可用。
+会话内登记（所有宿主）：agent 先通过问答与用户终审元数据——环境变量名及别名（从上下文推断 well-known 候选，或按 `KEY, alias1, alias2` 格式自定义）、可选描述、provider——然后给出一条完整的 `senv set` 命令由你在自己终端执行（隐藏输入，值不经对话）。这条终端通道是通用基线，任何宿主都可用。
 
 宿主集成把收值这一步升级为会话内卡片（密钥在宿主 UI 中键入，直达凭据库，不经模型上下文）：
 
 | 宿主 | 通道 | 详情 |
 | --- | --- | --- |
 | ZCode | 插件自带：`senv mcp` 子命令（MCP elicitation），安装即自动注册 | skill `references/zcode.md` |
-| opencode | 不注册（opencode 宿主 elicitation 支持未验证）——入库走 SKILL.md 的 `senv add` 终端兜底 | 无 |
+| opencode | 不注册（opencode 宿主 elicitation 支持未验证）——入库走 SKILL.md 的 `senv set` 终端兜底 | 无 |
 | DSH | DSH 适配器自带：`add_secret` 工具（宿主问答卡片） | skill `references/dsh.md` |
 
 无论哪条通道，密钥值都不进入模型上下文，返回给 agent 的结果永远脱敏（不含密钥值）。
@@ -117,7 +126,7 @@ DSH（DeepSeek Harness）bundle：**独立包 `@foperate/secret-env-dsh`**（零
 手工登记凭据（用户终端执行，隐藏输入，值不经对话）：
 
 ```bash
-secret-env add GH_TOKEN --provider keychain --desc 'GitHub 令牌' --alias GITHUB_TOKEN
+secret-env set GH_TOKEN --provider keychain --desc 'GitHub 令牌' --alias GITHUB_TOKEN   # 值经 stdin 或隐藏输入
 secret-env list
 ```
 

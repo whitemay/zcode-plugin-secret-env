@@ -6,7 +6,7 @@
 //   key 题形态=agent 构造 well-known 候选列表（如 HF_TOKEN/HUGGINGFACE_TOKEN）+自由输入（格式
 //   `KEY, alias1, alias2` 逗号分隔）；② 密钥真值走本 server 的 elicitation（仅 accept 落库；宿主已知
 //   无 password 掩码——收值屏一屏制：enum 唯一选项「手工命令行」+宿主强制附自由输入框收值，非 accept
-//   回附带 senv add 命令由用户终端执行即兜底通道）。
+//   回附带 senv set 命令由用户终端执行即兜底通道）。
 // tool result 永远脱敏（不含值）。运行时中立：与 core.mjs 同规，不用 Bun 专属 API。
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -26,7 +26,7 @@ const lang = (() => {
 const T = {
   zh: {
     missingName: "缺少 name 入参——请先经宿主问答与用户终审环境变量名（well-known 候选或自定义，别名以逗号分隔）后再调用",
-    exists: "已存在同名条目，请换名后重调（维护已有条目请在终端用 senv add 不带 --provider）",
+    exists: "已存在同名条目，请换名后重调（维护已有条目请在终端用 senv set 不带 --provider）",
     badProvider: "provider 不在支持列表",
     manualOption: "手工通过命令行输入",
     valueMessage: (name) =>
@@ -34,7 +34,7 @@ const T = {
   },
   en: {
     missingName: "Missing `name` argument — finalize the env var name with the user via the host's native Q&A (well-known candidates or custom; comma-separated aliases) before calling",
-    exists: "An entry with this name already exists — pick another name and call again (to maintain an existing entry run `senv add` without --provider in a terminal)",
+    exists: "An entry with this name already exists — pick another name and call again (to maintain an existing entry run `senv set` without --provider in a terminal)",
     badProvider: "provider not in the supported list",
     manualOption: "Enter manually via command line",
     valueMessage: (name) =>

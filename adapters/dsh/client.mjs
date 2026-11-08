@@ -2,6 +2,8 @@
 // 契约：stdin 一行 JSON，stdout 一行 JSON；rsenv 侧退出码 0 成功 / 2 业务拒绝。
 // 值不经过本插件：parse 只回 {action, token?}，消费由改写命令里的 rsenv inject 完成（eval 链）。
 import { spawn, spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 export const PROTOCOL = 1;
 
@@ -28,8 +30,28 @@ function toJson(out, err, code, cmd) {
   return json;
 }
 
-export function createClient({ bin = process.env.SENV_BIN || "rsenv", timeoutMs = 8000 } = {}) {
-  const hint = `请安装 rsenv 并确认 ${bin} 在 PATH 上，然后在其终端运行 rsenv login 解锁密钥库`;
+// 二进制解析链（HOST-PROTOCOL §解析）：SENV_BIN 显式指定 > secrets.json $backend 键 > 默认 senv。
+function configuredBackend() {
+  try {
+    const cfg = JSON.parse(readFileSync(join(process.env.HOME ?? "", ".config/secret-env", "secrets.json"), "utf8"));
+    return cfg?.$backend === "rsenv" ? "rsenv" : null; // 其余值一律视为未配置（senv 是缺省）
+  } catch { return null; }
+}
+
+export function resolveBin() {
+  if (process.env.SENV_BIN) return process.env.SENV_BIN;
+  const order = configuredBackend() === "rsenv" ? ["rsenv", "secret-env"] : ["secret-env", "rsenv"];
+  for (const name of order) {
+    for (const dir of (process.env.PATH ?? "").split(":")) {
+      if (!dir) continue;
+      try { if (existsSync(`${dir}/${name}`)) return `${dir}/${name}`; } catch {}
+    }
+  }
+  return order[0]; // 双缺省兜底：后续 spawn ENOENT 走报错路径
+}
+
+export function createClient({ bin = resolveBin(), timeoutMs = 8000 } = {}) {
+  const hint = `请安装 rsenv（或 senv）并确认 ${bin} 在 PATH 上；rsenv 还需在其终端运行 rsenv login 解锁密钥库`;
 
   function run(cmd, payload, { timeout = timeoutMs } = {}) {
     return new Promise((resolve, reject) => {

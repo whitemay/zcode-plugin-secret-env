@@ -51,11 +51,12 @@
   "scripts": {
     "test": "bun adapters/zcode/tests/hook.mjs",
     "test:dsh": "bun tests/dsh-guard.mjs && bun tests/dsh-protocol.mjs && bun tests/rules-sync.mjs && bun tests/dsh-package.mjs",
-    "test:opencode": "bun tests/opencode.mjs",
+    "test:opencode": "bun adapters/opencode/tests/parse.test.ts && bun adapters/opencode/tests/guard.test.ts",
     "test:skill-sync": "bun tests/skill-sync.mjs",
     "test:protocol": "bun tests/cli-protocol.mjs",
+    "test:daemon": "bun tests/senv-daemon.mjs",
     "skill:sync": "bun tests/skill-sync-copy.mjs",
-    "test:all": "bun tests/skill-sync.mjs && bun adapters/zcode/tests/hook.mjs && bun tests/dsh-guard.mjs && bun tests/dsh-protocol.mjs && bun tests/rules-sync.mjs && bun tests/dsh-package.mjs && bun tests/opencode.mjs && bun tests/cli-protocol.mjs"
+    "test:all": "bun tests/skill-sync.mjs && bun adapters/zcode/tests/hook.mjs && bun tests/dsh-guard.mjs && bun tests/dsh-protocol.mjs && bun tests/rules-sync.mjs && bun tests/dsh-package.mjs && bun adapters/opencode/tests/parse.test.ts && bun adapters/opencode/tests/guard.test.ts && bun tests/senv-daemon.mjs && bun tests/cli-protocol.mjs"
   },
   "engines": {
     "node": ">=18"

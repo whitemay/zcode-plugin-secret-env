@@ -59,8 +59,8 @@ function runCli(cmd, payload) {
 const parse = (r) => { try { return JSON.parse(r.stdout); } catch { return null; } };
 
 try {
-  // ---------- ① info ----------
-  console.log("① info --json");
+  // ---------- ① info（HOST-PROTOCOL §info） ----------
+  console.log("① info");
   {
     const r = runCli("info");
     const info = parse(r);
@@ -68,133 +68,145 @@ try {
     check("protocol = 1", info?.protocol === 1);
     check("version 非空", typeof info?.version === "string" && info.version.length > 0);
     check("configMtime > 0", typeof info?.configMtime === "number" && info.configMtime > 0);
+    check("backend = senv", info?.backend === "senv");
+    check("capabilities.daemon = true", info?.capabilities?.daemon === true);
+    check("capabilities.providers 含 keychain", info?.capabilities?.providers?.includes("keychain"));
     const entry = info?.entries?.find((e) => e.name === "PROBE_TOKEN");
-    check("entries 含主键与别名", entry?.aliases?.includes("PROBE_ALIAS"), JSON.stringify(entry));
-    check("entries 带描述", entry?.description === "协议探针");
+    check("entries 含主键", Boolean(entry), JSON.stringify(info?.entries));
+    check("别名折叠进 desc", entry?.desc?.includes("PROBE_ALIAS"), JSON.stringify(entry));
+    check("desc 带描述", entry?.desc?.includes("协议探针"));
     check("响应不含值", !r.stdout.includes(SECRET_READ));
     check("响应不含 uri（清单不外泄映射）", !r.stdout.includes("keychain://"));
-    check("rules.guardPaths 非空", Array.isArray(info?.rules?.guardPaths) && info.rules.guardPaths.length > 0);
-    check("rules.guardPaths 无重复", new Set(info?.rules?.guardPaths).size === info?.rules?.guardPaths.length, JSON.stringify(info?.rules?.guardPaths));
-    check("providers 含 keychain", info?.providers?.includes("keychain"));
+    check("guard_paths 蛇形非空", Array.isArray(info?.guard_paths) && info.guard_paths.length > 0);
+    check("guard_paths 无重复", new Set(info?.guard_paths ?? []).size === info?.guard_paths?.length);
+    check("guard_paths 覆盖配置目录", info?.guard_paths?.includes(".config/secret-" + "env"), JSON.stringify(info?.guard_paths));
   }
 
-  // ---------- ② inject ----------
-  console.log("② inject");
+  // ---------- ② parse（判定四形态） ----------
+  console.log("② parse");
   {
-    const r = runCli("inject", { protocol: 1, command: "ls -la", session: "t1" });
+    const r = runCli("parse", { command: "ls -la" });
+    check("无引用 → pass", r.exit === 0 && parse(r)?.action === "pass", r.stderr.slice(0, 120));
+  }
+  let tokenSeq = 0;
+  const freshToken = () => {
+    const r = runCli("parse", { command: `echo ${D}PROBE_TOKEN`, session: `t${tokenSeq++}` });
+    return { r, out: parse(r) };
+  };
+  {
+    const { r, out } = freshToken();
+    check("有引用 → inject 判定", r.exit === 0 && out?.ok === true && out.action === "inject", r.stderr.slice(0, 160));
+    check("token 32hex", /^[0-9a-f]{32}$/.test(out?.token ?? ""));
+    check("names 按引用原名", Array.isArray(out?.names) && out.names.includes("PROBE_TOKEN"));
+    check("判定不含值", !r.stdout.includes(SECRET_READ));
+    check("token 不落盘（配置目录无 slots）", !existsSync(join(CONFIG_DIR, "slots")));
+  }
+  {
+    const r = runCli("parse", { command: `sh -c 'echo ${D}PROBE_TOKEN'` });
+    check("单引号 → reject", r.exit === 0 && parse(r)?.action === "reject", r.stderr.slice(0, 120));
+    check("理由提示双引号", parse(r)?.reason?.includes("双引号"));
+  }
+  {
+    const r = runCli("parse", { command: `PROBE_TOKEN=${D}PROBE_TOKEN env` });
+    check("倾泻 → reject", parse(r)?.action === "reject");
+    check("理由提示倾泻", parse(r)?.reason?.includes("倾泻"));
+  }
+  {
+    const r = runCli("parse", { command: `cat '${CONFIG_DIR}/sec` + `rets.json'` });
     const out = parse(r);
-    check("无引用 → 原样返回", r.exit === 0 && out?.command === "ls -la" && out?.envFile === null, r.stderr.slice(0, 200));
-  }
-  {
-    const r = runCli("inject", { protocol: 1, command: `echo ${D}PROBE_TOKEN`, session: "t2" });
-    const out = parse(r);
-    check("正常注入 exit 0", r.exit === 0, r.stderr.slice(0, 200));
-    check("命令加 source 前缀", out?.command?.startsWith(". ") && out.command.endsWith(`echo ${D}PROBE_TOKEN`));
-    check("envFile 存在", typeof out?.envFile === "string" && existsSync(out.envFile));
-    if (out?.envFile && existsSync(out.envFile)) {
-      const body = readFileSync(out.envFile, "utf8");
-      check("env 文件含原名 export", body.startsWith("export PROBE_TOKEN='"), body.slice(0, 20));
-      check("env 文件值正确", body.includes(SECRET_READ));
-      check("env 文件 0600", (statSync(out.envFile).mode & 0o777) === 0o600);
-      unlinkSync(out.envFile);
-    }
-    check("stdout 不含值", !r.stdout.includes(SECRET_READ));
-  }
-  {
-    const r = runCli("inject", { protocol: 1, command: `sh -c 'echo ${D}PROBE_TOKEN'` });
-    check("单引号 → exit 2", r.exit === 2, `exit=${r.exit}`);
-    check("提示改双引号", parse(r)?.error?.includes("双引号"), parse(r)?.error);
-    check("stdout 无值", !r.stdout.includes(SECRET_READ));
-  }
-  {
-    const r = runCli("inject", { protocol: 1, command: `PROBE_TOKEN=${D}PROBE_TOKEN env` });
-    check("倾泻 → exit 2", r.exit === 2, `exit=${r.exit}`);
-    check("提示移除倾泻", parse(r)?.error?.includes("倾泻"), parse(r)?.error);
-  }
-  {
-    const r = runCli("inject", { protocol: 1, command: "echo {{secret:NOPE}}" });
-    check("未配置占位符 → exit 2", r.exit === 2, `exit=${r.exit}`);
-    check("提示未配置", parse(r)?.error?.includes("占位符"), parse(r)?.error);
-  }
-  {
-    // 命令文本守卫（inject 内置，2026-11-06）：提及配置/密钥库文件即拒
-    const r = runCli("inject", { protocol: 1, command: `cat '${CONFIG_DIR}/secrets.json'` });
-    check("命令提及受保护路径 → exit 2", r.exit === 2, `exit=${r.exit}`);
-    check("code = guard", parse(r)?.code === "guard", JSON.stringify(parse(r)));
-    check("提示受保护文件", parse(r)?.error?.includes("受保护文件"), parse(r)?.error);
+    check("文件提及 → reject", out?.action === "reject", r.stderr.slice(0, 120));
+    check("理由提示受保护文件", out?.reason?.includes("受保护文件"));
     check("守卫拒绝不回显值", !r.stdout.includes(SECRET_READ));
   }
   {
-    const r = runCli("inject", { protocol: 99, command: "ls" });
-    check("协议版本不匹配 → exit 3", r.exit === 3, `exit=${r.exit}`);
-    check("code = protocol", parse(r)?.code === "protocol");
+    const r = runCli("parse", { command: `echo ${D}NOPE_TOKEN` });
+    check("未配置 $VAR → pass（rsenv 同口径）", r.exit === 0 && parse(r)?.action === "pass", r.stdout.slice(0, 160));
   }
   {
-    const r = runCli("inject", "not-json");
-    check("非 JSON stdin → exit 2", r.exit === 2, `exit=${r.exit}`);
+    const r = runCli("parse", {});
+    check("缺 command → exit 2", r.exit === 2, `exit=${r.exit}`);
   }
 
-  // ---------- ③ store ----------
-  console.log("③ store");
-  const base = { protocol: 1, name: "cli proto token", provider: "keychain", description: "store 探针", value: SECRET_STORE };
+  // ---------- ③ inject token（一次性消费） ----------
+  console.log("③ inject");
   {
-    // 无 value = 校验阶段：只回环境变量名，不写配置
-    const r = runCli("store", { protocol: 1, name: "cli proto token", provider: "keychain" });
-    const out = parse(r);
-    check("校验阶段 exit 0 / status=ready", r.exit === 0 && out?.status === "ready", JSON.stringify(out));
-    check("校验阶段回 envName", out?.envName === "CLI_PROTO_TOKEN");
-    check("校验阶段不写配置", JSON.parse(readFileSync(CONFIG, "utf8")).CLI_PROTO_TOKEN === undefined);
+    const { out } = freshToken();
+    const r = runCli(`inject ${out.token}`);
+    check("export 行输出", r.exit === 0 && r.stdout === `export PROBE_TOKEN='${SECRET_READ}'`, r.stdout.slice(0, 40) || r.stderr.slice(0, 120));
+    const replay = runCli(`inject ${out.token}`);
+    check("重放 → exit 2", replay.exit === 2, `exit=${replay.exit}`);
+    check("重放提示已消费", replay.stderr.includes("already-consumed"), replay.stderr);
+    check("无 token → exit 2", runCli("inject").exit === 2);
   }
   {
-    // commandOnly = 终端兜底命令（不入库）
-    const r = runCli("store", { protocol: 1, name: "cli proto token", provider: "keychain", detail: "svc-x", alias: "a1,a2", description: "d", commandOnly: true });
-    const out = parse(r);
-    check("commandOnly exit 0", r.exit === 0 && out?.status === "command", JSON.stringify(out));
-    check("兜底命令含 senv add", typeof out?.command === "string" && out.command.startsWith("senv add -n "), out?.command);
-    check("兜底命令带别名", out?.command?.includes("--alias") === true);
-    check("兜底命令不含值", !r.stdout.includes(SECRET_STORE));
+    // eval 链端到端（HOST-PROTOCOL §注入链）
+    const { out } = freshToken();
+    const marker = `probe_${tokenSeq}_${Date.now()}`;
+    const chain = `output=$(HOME='${HOME}' /bin/zsh -c '_senv_inj="$(bun ${CLI} inject ${out.token})" && eval "$_senv_inj" && { echo ${marker}; }' 2>&1); if [ "$output" = "${marker}" ]; then echo OK; else echo "GOT:$output"; fi`;
+    const p = Bun.spawnSync(["bash", "-c", chain], { stdout: "pipe" });
+    check("eval 链端到端", p.stdout.toString().trim().startsWith("OK"), p.stdout.toString().slice(0, 160));
   }
+
+  // ---------- ③b set（收编 add/store） ----------
+  console.log("③b set");
   {
-    const r = runCli("store", base);
-    const out = parse(r);
-    check("入库 exit 0", r.exit === 0, r.stderr.slice(0, 200));
-    check("status = stored", out?.status === "stored", JSON.stringify(out));
-    check("envName 归一化", out?.envName === "CLI_PROTO_TOKEN");
-    check("uri = keychain://…", typeof out?.uri === "string" && out.uri.startsWith("keychain://"));
-    check("响应不含值", !r.stdout.includes(SECRET_STORE));
-  }
-  {
+    const r = runCli("set CLI_URI_TOKEN --uri keychain://set-probe-svc --desc set-probe-desc --alias SET_ALIAS");
+    check("--uri 登记 exit 0", r.exit === 0, r.stderr.slice(0, 160));
     const raw = JSON.parse(readFileSync(CONFIG, "utf8"));
-    check("secrets.json 已登记", raw.CLI_PROTO_TOKEN?.uri?.startsWith("keychain://") === true);
+    check("secrets.json 已登记 uri", raw.CLI_URI_TOKEN?.uri === "keychain://set-probe-svc");
+    check("desc 已登记", raw.CLI_URI_TOKEN?.description === "set-probe-desc");
+    check("alias 已登记", raw.CLI_URI_TOKEN?.aliases?.includes("SET_ALIAS"));
+  }
+  {
+    // stdin 值入库（假 kdbx 后端，隔离）
+    const r = runCli("set CLI_STORE_TOKEN --provider keychain --desc store 探针", SECRET_STORE);
+    check("stdin 值入库 exit 0", r.exit === 0, r.stderr.slice(0, 200));
+    const raw = JSON.parse(readFileSync(CONFIG, "utf8"));
+    check("uri = keychain://…", raw.CLI_STORE_TOKEN?.uri?.startsWith("keychain://") === true);
     check("配置文件不含值", !JSON.stringify(raw).includes(SECRET_STORE));
-    check("描述已登记", raw.CLI_PROTO_TOKEN?.description === "store 探针");
   }
   {
-    // 闭环：store 写入的值能被 inject 解析出来
-    const r = runCli("inject", { protocol: 1, command: `echo ${D}CLI_PROTO_TOKEN`, session: "t3" });
-    const out = parse(r);
-    const body = out?.envFile && existsSync(out.envFile) ? readFileSync(out.envFile, "utf8") : "";
-    check("store → inject 闭环", body.includes(SECRET_STORE) === true);
-    if (out?.envFile && existsSync(out.envFile)) unlinkSync(out.envFile);
+    // 闭环：set 写入的值经 parse+inject 解析出来
+    const r = runCli("parse", { command: `echo ${D}CLI_STORE_TOKEN`, session: "closure" });
+    const token = parse(r)?.token;
+    const inj = token ? runCli(`inject ${token}`) : { stdout: "", stderr: "no token" };
+    check("set → parse → inject 闭环", inj.stdout === `export CLI_STORE_TOKEN='${SECRET_STORE}'`, inj.stdout.slice(0, 40) || inj.stderr.slice(0, 120));
   }
   {
-    const r = runCli("store", { ...base, value: "x" });
-    check("重复名称 → exit 2 / exists", r.exit === 2 && parse(r)?.code === "exists", `exit=${r.exit}`);
+    const r = runCli("set CLI_URI_TOKEN");
+    check("已存在无 provider = 维护模式 exit 0", r.exit === 0 && r.stdout.includes("维护模式"), r.stderr.slice(0, 120));
+    const raw = JSON.parse(readFileSync(CONFIG, "utf8"));
+    check("维护模式 uri 不变", raw.CLI_URI_TOKEN?.uri === "keychain://set-probe-svc");
   }
   {
-    const r = runCli("store", { ...base, name: "other", provider: "nope" });
-    check("未知 provider → exit 2", r.exit === 2 && parse(r)?.code === "unknown-provider", `exit=${r.exit}`);
+    const r = runCli("set OTHER_TOKEN");
+    check("新条目缺 provider/uri → exit 2", r.exit === 2, `exit=${r.exit}`);
+    const r2 = runCli("set OTHER_TOKEN --uri not-a-uri");
+    check("坏 uri → exit 2", r2.exit === 2, `exit=${r2.exit}`);
   }
   {
-    const r = runCli("store", { ...base, name: "other", value: "" });
-    check("空值 → exit 2", r.exit === 2 && parse(r)?.code === "empty-value", `exit=${r.exit}`);
+    const r = runCli("add ALIAS_TOKEN --uri keychain://alias-probe");
+    check("add 兼容别名仍可用", r.exit === 0, r.stderr.slice(0, 120));
+    check("add 提示收编进 set", r.stderr.includes("set"), r.stderr.slice(0, 120));
   }
+
+  // ---------- ③c daemon（复用与 socket 权限） ----------
+  console.log("③c daemon");
   {
-    const r = runCli("store", { protocol: 99, name: "x", value: "y" });
-    check("store 协议不匹配 → exit 3", r.exit === 3 && parse(r)?.code === "protocol", `exit=${r.exit}`);
+    const fsmod = await import("node:fs");
+    const sock = join(CONFIG_DIR, "senv.sock");
+    const first = parse(runCli("parse", { command: `echo ${D}PROBE_TOKEN`, session: "dmn1" }))?.token;
+    check("首次 parse 拉起 daemon", Boolean(first) && fsmod.existsSync(sock));
+    check("socket 0600", (statSync(sock).mode & 0o777) === 0o600);
+    const second = parse(runCli("parse", { command: `echo ${D}PROBE_TOKEN`, session: "dmn2" }))?.token;
+    check("复用活 daemon（二次 parse 正常签发）", Boolean(second) && second !== first);
+    // 两个 token 都可消费（同一 daemon 服务）
+    check("token1 可消费", runCli(`inject ${first}`).exit === 0);
+    check("token2 可消费", runCli(`inject ${second}`).exit === 0);
   }
 
   // ---------- ④ senv mcp 子命令入口 ----------
+
   // 用 node 跑（真实安装形态的 shebang = node）：mcp.mjs 反向 import cli.mjs，
   // 若 cli.mjs 用 await import 会构成 ESM 循环死锁 → node exit 13（曾发生的回归）。
   console.log("④ senv mcp（node 运行时）");

@@ -1237,6 +1237,9 @@ async fn run(cmd: &str, args: &[String]) -> Result<(), Box<dyn std::error::Error
                 "{}",
                 serde_json::to_string_pretty(&json!({
                     "protocol": 1,
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "backend": "rsenv",
+                    "capabilities": {"daemon": true},
                     "guard_paths": guard_paths,
                     "entries": entries,
                 }))?

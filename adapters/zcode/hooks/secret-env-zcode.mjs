@@ -1,13 +1,41 @@
-// ZCode 宿主适配壳（harness 专属逻辑集中于此，rsenv CLI 宿主无关）：
+// ZCode 宿主适配壳（harness 专属逻辑集中于此，CLI 宿主无关）：
 //   node secret-env-zcode.mjs session-start   → SessionStart 清单注入（additionalContext）
 //   node secret-env-zcode.mjs pretooluse      → PreToolUse 分流：Bash=命令门 / 其余=文件守卫
-// 运行时中立（node），零依赖；rsenv 经 PATH 调用（SENV_BIN 覆盖仅测试用）。
-// 口径：CLI 不在 PATH 或门报错 → 拒绝退出（宁可失败，不静默放行）；解析失败放行。
+// 运行时中立（node），零依赖；CLI 经解析链调用（HOST-PROTOCOL §解析：SENV_BIN > rsenv > secret-env）。
+// 协议与 rsenv/senv 0.4 同构（parse/inject/info，protocol 1）；口径：CLI 不在 PATH 或门报错 → 拒绝退出
+// （宁可失败，不静默放行）；解析失败放行。
 
 import { spawnSync } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
-const BIN = process.env.SENV_BIN ?? "rsenv";
+// 二进制解析链（HOST-PROTOCOL §解析）：SENV_BIN 显式指定 > secrets.json $backend 键 > 默认 senv。
+// 探测 = PATH 逐目录找可执行文件（不 spawn，避免探测开销进钩子路径）。
+function configuredBackend() {
+  try {
+    const cfg = JSON.parse(readFileSync(join(process.env.HOME ?? "", ".config/secret-env", "secrets.json"), "utf8"));
+    return cfg?.$backend === "rsenv" ? "rsenv" : null; // 其余值一律视为未配置（senv 是缺省）
+  } catch { return null; }
+}
+
+const BIN = (() => {
+  if (process.env.SENV_BIN) return process.env.SENV_BIN;
+  // $backend 显式指定时该后端优先；缺省 senv（secret-env）优先，装了什么用什么
+  const order = configuredBackend() === "rsenv" ? ["rsenv", "secret-env"] : ["secret-env", "rsenv"];
+  for (const name of order) {
+    for (const dir of (process.env.PATH ?? "").split(":")) {
+      if (!dir) continue;
+      try {
+        const p = `${dir}/${name}`;
+        if (existsSync(p)) return p;
+      } catch {}
+    }
+  }
+  return order[0]; // 双缺省兜底：后续 spawn ENOENT 走降级/拒绝路径
+})();
+
+// 注入链模板（HOST-PROTOCOL §注入链，两端逐字一致）：token 一次性、&& 链 fail-closed
+const injectChain = (command, token) => `_senv_inj="$(${BIN} inject ${token})" && eval "$_senv_inj" && { ${command}; }`;
 const LOG = "/tmp/rsenv-zcode.log";
 const log = (msg) => { try { appendFileSync(LOG, `[${new Date().toISOString()}] ${msg}\n`); } catch {} };
 
@@ -102,9 +130,8 @@ async function preToolUse() {
   let out = null;
   try { out = JSON.parse(r.stdout); } catch { /* 非判定输出按失败处理 */ }
   if (out?.action === "inject" && out.token) {
-    const inj = `_rse_inj="$(${BIN} inject ${out.token})" && eval "$_rse_inj" && { ${command}; }`;
     log(`parse → token injection, names=${(out.names ?? []).join(",")}`);
-    allow({ ...toolInput, command: inj });
+    allow({ ...toolInput, command: injectChain(command, out.token) });
   }
   if (out?.action === "reject") deny(out.reason ?? "command rejected by rsenv guard");
   if (out?.action === "pass") allow();

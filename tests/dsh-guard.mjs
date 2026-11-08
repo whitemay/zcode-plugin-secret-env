@@ -107,7 +107,7 @@ const makeCtx = (answer) => {
     apply(ctxInj, { client });
     const exec = { name: "bash", arguments: { command: "echo hi" }, callId: "c2" };
     await regInj["tools/execute"](exec, async () => "next");
-    assert.match(exec.arguments.command, /_rse_inj="\$\(fake inject tok123\)"/, "注入命令应改写为 eval 链");
+    assert.match(exec.arguments.command, /_senv_inj="\$\(fake inject tok123\)"/, "注入命令应改写为 eval 链");
     assert.match(exec.arguments.command, /\{ echo hi; \}/, "原命令应在链尾");
   }
   // 命令守卫由 CLI parse 执行：即使没有配置条目也要走一次（否则受保护路径漏拦）

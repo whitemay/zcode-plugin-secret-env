@@ -3,7 +3,7 @@
 // "@scope/pkg/subpath" 形式（npa 解析出子路径后判为非法 spec，转去打 npm 装假路径并报 NpmInstallFailedError）。
 // 与 ZCode 同构（2026-11-07 切换 rsenv 三分法）：插件不含注入代码，execute.before 经 PATH 起子进程
 // 调 `rsenv parse`（钩子时刻守卫 + 取值 + 签发一次性 token）；token → 改写为 eval 链
-// `_rse_inj="$(rsenv inject <token>)" && eval "$_rse_inj" && { 原命令; }`，&& 链保 fail-closed。
+// 注入链模板见 HOST-PROTOCOL（`_senv_inj` 链，&& 链保 fail-closed）。
 // CLI 不在 PATH / 门报错 → 抛错（宁可失败，不静默旁路）。
 // skill 用包内自带副本（adapters/opencode/skills/secret-env/，与权威位逐字节一致，tests/skill-sync.mjs
 // 校验）——宿主没有"插件包内 skills/ 自动发现"，必须程序化注册。
@@ -11,11 +11,32 @@
 // SKILL.md 的终端兜底（senv add 命令）。
 import { Plugin } from "@opencode/plugin";
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const BIN = process.env.SENV_BIN ?? "rsenv";
+// 二进制解析链（HOST-PROTOCOL §解析）：SENV_BIN 显式指定 > secrets.json $backend 键 > 默认 senv。
+function configuredBackend(): "rsenv" | null {
+  try {
+    const cfg = JSON.parse(readFileSync(join(process.env.HOME ?? "", ".config/secret-env", "secrets.json"), "utf8"));
+    return cfg?.$backend === "rsenv" ? "rsenv" : null; // 其余值一律视为未配置（senv 是缺省）
+  } catch { return null; }
+}
+
+const BIN = (() => {
+  if (process.env.SENV_BIN) return process.env.SENV_BIN;
+  const order = configuredBackend() === "rsenv" ? ["rsenv", "secret-env"] : ["secret-env", "rsenv"];
+  for (const name of order) {
+    for (const dir of (process.env.PATH ?? "").split(":")) {
+      if (!dir) continue;
+      try { if (existsSync(`${dir}/${name}`)) return `${dir}/${name}`; } catch {}
+    }
+  }
+  return order[0]; // 双缺省兜底：spawn ENOENT 走降级/拒绝路径
+})();
+
+// 注入链模板（HOST-PROTOCOL §注入链，两端逐字一致）：token 一次性、&& 链 fail-closed
+const injectChain = (command: string, token: string) => `_senv_inj="$(${BIN} inject ${token})" && eval "$_senv_inj" && { ${command}; }`;
 
 // ---- 文件守卫（挂账清偿，2026-11-08）：保护对象=静态文件，零 daemon 依赖 ----
 // 规则数据=rsenv info 快照（CLI daemon-free 常给）；语义与 DSH guards.mjs 同构。
@@ -116,7 +137,7 @@ export function cliParse(command: string): Promise<string | null> {
       try { payload = JSON.parse(out.trim()); } catch {}
       if (payload?.action === "inject" && payload.token) {
         // 一次性 token 经 eval 链消费；&& 短路保 fail-closed（token 已消费/GC/daemon 重启 → 原命令不执行）
-        resolve(`_rse_inj="$(${BIN} inject ${payload.token})" && eval "$_rse_inj" && { ${command}; }`);
+        resolve(injectChain(command, payload.token));
         return;
       }
       if (payload?.action === "pass") { resolve(null); return; }

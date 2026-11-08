@@ -1,6 +1,6 @@
 // rsenv DSH 真身适配器（协议客户端形态，2026-11-07 接 rsenv 三分法）：
 //   1) tools/execute 包装 bash：调 CLI `parse`（命令文本守卫 + 取值 + 签发一次性 token），
-//      inject 回复 → 改写为 eval 链 `_rse_inj="$(rsenv inject <token>)" && eval ... && { 原命令; }`；
+//      inject 回复 → 改写为 eval 链 `_senv_inj="$(<bin> inject <token>)" && eval ... && { 原命令; }`（HOST-PROTOCOL §注入链）；
 //      值不出 daemon（token 一次性消费），不进上下文；
 //   2) tools.guard 同步守卫：本地规则副本 + info 快照（受保护路径、名字清单），不 spawn 子进程；
 //   3) systemPrompt 注入已配置名字清单与用法约定（来自 info 快照）。
@@ -101,7 +101,7 @@ export function apply(ctx, options = {}) {
     if (result?.action !== "inject" || !result.token) return next(); // pass / 空判定 = 零注入
 
     // 一次性 token 经 eval 链消费；&& 短路保 fail-closed（token 已消费/GC/daemon 重启 → 原命令不执行）
-    const rewritten = `_rse_inj="$(${client.bin} inject ${result.token})" && eval "$_rse_inj" && { ${command}; }`;
+    const rewritten = `_senv_inj="$(${client.bin} inject ${result.token})" && eval "$_senv_inj" && { ${command}; }`;
     exec.arguments = { ...exec.arguments, command: rewritten };
     log(`parse → token injection names=${(result.names ?? []).join(",")}`);
     void refresh(); // 解析成功可能伴随配置变化（极少），顺手刷新

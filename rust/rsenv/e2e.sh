@@ -130,7 +130,7 @@ OUT=$(printf '{"command":"echo $GH_TOKEN"}' | $BIN parse)
 echo "$OUT" | grep -q '"action":"inject"' && echo "$OUT" | grep -q '"token"' && echo "parse: token minted OK" || { echo "FAIL: $OUT"; exit 1; }
 TOKEN=$(echo "$OUT" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])' 2>/dev/null)
 # 消费形态（JS 壳同款改写）：eval 链注入 + 原命令执行
-sh -c "_rse_inj=\"\$($BIN inject $TOKEN)\" && eval \"\$_rse_inj\" && { echo \$GH_TOKEN; }" | grep -q 'ghp_fake_value_123' && echo "inject: eval chain injects value OK" || { echo "FAIL: eval chain"; exit 1; }
+sh -c "_senv_inj=\"\$($BIN inject $TOKEN)\" && eval \"\$_senv_inj\" && { echo \$GH_TOKEN; }" | grep -q 'ghp_fake_value_123' && echo "inject: eval chain injects value OK" || { echo "FAIL: eval chain"; exit 1; }
 # 一次性：同 token 二次消费 → 死命令
 $BIN inject $TOKEN >/dev/null 2>&1 && { echo "FAIL: token reusable"; exit 1; } || echo "inject: token consumed once OK"
 # 裸调（无 token）= 死命令
@@ -143,7 +143,7 @@ $BIN inject $TOKEN2 >/dev/null 2>&1 && { echo "FAIL: GC'd token still redeemable
 # 重新签发即恢复（GC 不影响新槽位）
 OUT=$(printf '{"command":"echo $GH_TOKEN"}' | $BIN parse)
 TOKEN3=$(echo "$OUT" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])' 2>/dev/null)
-sh -c "_rse_inj=\"\$($BIN inject $TOKEN3)\" && eval \"\$_rse_inj\" && { echo \$GH_TOKEN; }" | grep -q 'ghp_fake_value_123' && echo "inject: post-GC fresh token OK" || { echo "FAIL: post-GC"; exit 1; }
+sh -c "_senv_inj=\"\$($BIN inject $TOKEN3)\" && eval \"\$_senv_inj\" && { echo \$GH_TOKEN; }" | grep -q 'ghp_fake_value_123' && echo "inject: post-GC fresh token OK" || { echo "FAIL: post-GC"; exit 1; }
 RC=0; /usr/bin/python3 -c 'import json;print(json.dumps({"command":"echo \x27$GH_TOKEN\x27"}))' | $BIN parse >/dev/null 2>&1 || RC=$?
 [ "$RC" = "2" ] && echo "parse: single-quote ref rejected OK" || { echo "FAIL: single-quote not rejected rc=$RC"; exit 1; }
 OUT=$(/usr/bin/python3 -c 'import json;print(json.dumps({"command":"echo $GH_TOKEN; printenv GH_TOKEN"}))' | $BIN parse 2>&1 || true)
