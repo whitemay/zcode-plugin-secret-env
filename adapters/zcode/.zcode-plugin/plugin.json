@@ -10,7 +10,7 @@
   "mcpServers": {
     "secret-env": {
       "type": "stdio",
-      "command": "rsenv",
+      "command": "secret-env",
       "args": [
         "mcp"
       ]
