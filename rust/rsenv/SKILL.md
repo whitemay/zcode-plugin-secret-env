@@ -48,7 +48,7 @@ description: 凭据引用与注入——密钥值永远不进模型上下文；�
 
 ## daemon（两端形态不同）
 
-**rsenv**：daemon 承载加密库——只由 `rsenv login` 拉起（用户终端、隐藏输入口令；幂等）。**login 请在完整用户 shell 里执行**（provider 工具环境继承 login 终端的 PATH）。CLI 不会自行拉起 daemon：不在时取值命令直接失败，错误信息含恢复指令。`rsenv logout`：清 key 与槽位、停 daemon。`rsenv init`：仅首次建库。
+**rsenv**：daemon 承载加密库——只由 `rsenv login` 拉起（用户终端、隐藏输入口令；幂等）。**login 请在完整用户 shell 里执行**（provider 工具环境继承 login 终端的 PATH）。CLI 不会自行拉起 daemon：不在时取值命令直接失败，错误信息含恢复指令。`rsenv logout`：清 key 与槽位、停 daemon。`rsenv init`：仅首次建库。端点按平台：macOS/Linux=unix socket（`daemon.sock`），Windows=named pipe（`\\.\pipe\rsenv-<username>`，真机实测挂账）——文件守卫语义不变，Windows 下管道名不是文件路径、不受文件提及守卫约束。
 
 **senv**：daemon 只做 token 内存槽，`parse` 按需自动拉起（有 socket 直接用，崩了自动重拉），**无需 login、无需管理**；agent 无感知，不必向用户提它。
 

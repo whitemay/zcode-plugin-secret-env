@@ -15,6 +15,11 @@ use tokio::net::UnixStream;
 type Conn = UnixStream;
 #[cfg(windows)]
 type Conn = tokio::net::windows::named_pipe::NamedPipeClient;
+// 服务端 accept 出的流类型（unix 与客户端同类；windows 管道 Server/Client 是两个类型）
+#[cfg(unix)]
+type SrvConn = UnixStream;
+#[cfg(windows)]
+type SrvConn = tokio::net::windows::named_pipe::NamedPipeServer;
 use turso::EncryptionOpts;
 
 // ---------- 路径约定（SENV_VAULT_DIR 仅测试重定向） ----------
@@ -274,7 +279,7 @@ struct DaemonState {
 
 
 async fn handle_conn(
-    stream: Conn,
+    stream: SrvConn,
     state: std::sync::Arc<tokio::sync::RwLock<DaemonState>>,
 ) {
     // 连接级鉴权：只认本二进制发起的连接（内核实查 peer exe，不可谎报、不可转移）
@@ -869,23 +874,16 @@ async fn ensure_daemon_via_launchd(exe: &std::path::Path, cipher: &str) -> Resul
     Err("daemon socket not ready after launchctl submit".into())
 }
 
-/// 在当前进程 PATH 里找工具的绝对路径（找不到=None，调用侧不传、使用时宁可失败）
+/// 在当前进程 PATH 里找工具的绝对路径（找不到=None，调用侧不传、使用时宁可失败）。
+/// 仅 macOS launchd 拉起路径使用（launchd 作业不继承 shell env）；其余平台 daemon
+/// 直接继承拉起方 PATH，无需 which。
+#[cfg(target_os = "macos")]
 fn which_tool(bin: &str) -> Option<std::path::PathBuf> {
     let path = std::env::var("PATH").ok()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::env::split_paths(&path).map(|d| d.join(bin)).find(|p| {
-            p.is_file() && std::fs::metadata(p).map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)
-        })
-    }
-    #[cfg(windows)]
-    {
-        let name = if bin.ends_with(".exe") { bin.to_string() } else { format!("{bin}.exe") };
-        std::env::split_paths(&path).map(|d| d.join(&name)).find(|p| p.is_file())
-    }
-    #[cfg(not(any(unix, windows)))]
-    { let _ = bin; None }
+    use std::os::unix::fs::PermissionsExt;
+    std::env::split_paths(&path).map(|d| d.join(bin)).find(|p| {
+        p.is_file() && std::fs::metadata(p).map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    })
 }
 
 async fn client_call(req: &Value) -> Result<Value, Box<dyn std::error::Error>> {

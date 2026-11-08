@@ -70,7 +70,11 @@ SENV_BIN 环境变量（显式指定）
 
 - 语义：token→值 映射只存在于 CLI 自身 daemon 内存；插件与 shell 只经手 token（零价值句柄），值全程不落盘。
   一次性消费、fail-closed、暴露窗口有上界（10s TTL 清扫；daemon 崩 = 未消费 token 丢失 = inject 短路，即要的语义）。
-- rsenv daemon：加密库守护 + launchd 托管 + login 生命周期。
+- rsenv daemon：加密库守护 + login 生命周期。端点与托管按平台分流（2026-11-08 起 Windows 支持，真机实测挂账）：
+  macOS=launchd submit + unix socket（0600，dead unlink 重 bind）；Linux=setsid detached spawn + 同 socket；
+  Windows=DETACHED_PROCESS spawn + win32 named pipe `\\.\pipe\rsenv-<username>`（默认 ACL 限本用户）。
+  连接级 peer 鉴权三平台同语义：内核实查 peer 进程 exe 与本二进制比对（macOS LOCAL_PEERPID+proc_pidpath /
+  Linux SO_PEERCRED+/proc/exe / Windows GetNamedPipeClientProcessId+QueryFullProcessImageName），非本二进制一律 rejected。
 - senv daemon（2026-11-08）：**纯 token 内存 map，与加密数据无关**——parse 按需拉起（detached）、有端点直接用、
   崩后下次重拉、不保活不管退出。端点分流：unix socket `~/.config/secret-env/senv.sock`（0600，死 socket 探测后
   unlink 重 bind）/ win32 named pipe `\\.\pipe\secret-env-tokens`（ACL 限本用户）。
